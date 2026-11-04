@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var previewView = CountdownView(overlay: false)
     private var panels: [OverlayPanel] = []
     private var statusItem: NSStatusItem?
+    private var inspector: TypographyInspector?
     private var eventPicker: NSPopUpButton?
     private var enabledButton: NSButton?
     private var enabledMenu: NSMenuItem?
@@ -87,10 +88,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showPreview() {
         if preview == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 740),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1360, height: 820),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = "Следующий конец света"
-            window.minSize = NSSize(width: 760, height: 580)
+            window.title = "Следующий конец света — редактор"
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.minSize = NSSize(width: 1120, height: 760)
             window.isReleasedWhenClosed = false
             let container = NSView()
             container.wantsLayer = true
@@ -102,6 +104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             previewView.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(previewView)
+            let inspector = TypographyInspector(canvas: previewView)
+            self.inspector = inspector
+            container.addSubview(inspector)
+            previewView.onSelectionChange = { [weak inspector] in inspector?.refresh() }
+            let separator = NSBox()
+            separator.boxType = .separator
+            separator.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(separator)
             let controls = NSStackView()
             controls.orientation = .vertical
             controls.alignment = .leading
@@ -140,14 +150,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLayoutConstraint.activate([
                 previewView.topAnchor.constraint(equalTo: container.topAnchor),
                 previewView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                previewView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                previewView.trailingAnchor.constraint(equalTo: separator.leadingAnchor),
+                separator.topAnchor.constraint(equalTo: container.topAnchor),
+                separator.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                separator.widthAnchor.constraint(equalToConstant: 1),
+                separator.trailingAnchor.constraint(equalTo: inspector.leadingAnchor),
+                inspector.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                inspector.topAnchor.constraint(equalTo: container.topAnchor),
+                inspector.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+                inspector.widthAnchor.constraint(equalToConstant: 332),
                 previewView.bottomAnchor.constraint(equalTo: controls.topAnchor, constant: -8),
                 controls.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 28),
-                controls.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -28),
+                controls.trailingAnchor.constraint(equalTo: separator.leadingAnchor, constant: -28),
                 controls.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -24)
             ])
             window.center()
             preview = window
+            previewView.selectBlock(0)
         }
         NSApp.activate(ignoringOtherApps: true)
         preview?.makeKeyAndOrderFront(nil)
@@ -300,38 +319,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let handle = try? FileHandle(forWritingTo: url) else { return }
         defer { try? handle.close() }
         do { try handle.seekToEnd(); try handle.write(contentsOf: data) } catch { }
-    }
-}
-
-/// A vector template remains crisp at every menu-bar scale and follows system appearance.
-enum StatusIcon {
-    static func skull() -> NSImage {
-        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
-            let shape = NSBezierPath()
-            shape.move(to: NSPoint(x: 5, y: 1))
-            shape.line(to: NSPoint(x: 13, y: 1))
-            shape.line(to: NSPoint(x: 13, y: 5))
-            shape.curve(to: NSPoint(x: 16, y: 10), controlPoint1: NSPoint(x: 15, y: 6), controlPoint2: NSPoint(x: 16, y: 7))
-            shape.curve(to: NSPoint(x: 9, y: 17), controlPoint1: NSPoint(x: 16, y: 14), controlPoint2: NSPoint(x: 13, y: 17))
-            shape.curve(to: NSPoint(x: 2, y: 10), controlPoint1: NSPoint(x: 5, y: 17), controlPoint2: NSPoint(x: 2, y: 14))
-            shape.curve(to: NSPoint(x: 5, y: 5), controlPoint1: NSPoint(x: 2, y: 7), controlPoint2: NSPoint(x: 3, y: 6))
-            shape.close()
-            shape.windingRule = .evenOdd
-            shape.appendOval(in: NSRect(x: 4, y: 7, width: 4, height: 4))
-            shape.appendOval(in: NSRect(x: 10, y: 7, width: 4, height: 4))
-            let nose = NSBezierPath()
-            nose.move(to: NSPoint(x: 9, y: 7))
-            nose.line(to: NSPoint(x: 7.5, y: 4.5))
-            nose.line(to: NSPoint(x: 10.5, y: 4.5))
-            nose.close()
-            shape.append(nose)
-            for x in [7.0, 10.0] { shape.appendRect(NSRect(x: x, y: 1, width: 1, height: 2.5)) }
-            NSColor.black.setFill()
-            shape.fill()
-            return true
-        }
-        image.isTemplate = true
-        image.accessibilityDescription = "Следующий конец света"
-        return image
     }
 }
