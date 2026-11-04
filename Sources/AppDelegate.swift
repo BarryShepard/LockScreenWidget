@@ -24,7 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("launch")
-        AppFont.register()
         do {
             guard let url = Bundle.main.url(forResource: "events", withExtension: "json") else {
                 throw NSError(domain: "TEotW", code: 1, userInfo: [NSLocalizedDescriptionKey: "Файл событий не найден."])
@@ -71,7 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         app.submenu?.addItem(withTitle: "Завершить", action: #selector(quit), keyEquivalent: "q").target = self
         NSApp.mainMenu = main
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem?.button?.title = "Конец света"
+        statusItem?.button?.image = StatusIcon.skull()
+        statusItem?.button?.imagePosition = .imageOnly
+        statusItem?.button?.toolTip = "Следующий конец света"
         let menu = NSMenu()
         enabledMenu = menu.addItem(withTitle: "Показывать при блокировке", action: #selector(toggleEnabled), keyEquivalent: "")
         enabledMenu?.target = self
@@ -95,6 +96,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             container.wantsLayer = true
             container.layer?.backgroundColor = NSColor(white: 0.055, alpha: 1).cgColor
             window.contentView = container
+            previewView.previewScreenSize = NSScreen.main?.frame.size ?? NSSize(width: 1512, height: 982)
+            previewView.onLayoutChange = { [weak self] in
+                self?.panels.forEach { ($0.contentView as? CountdownView)?.reloadPositions() }
+            }
             previewView.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(previewView)
             let controls = NSStackView()
@@ -119,8 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             row.addArrangedSubview(button)
             controls.addArrangedSubview(row)
             let test = NSButton(title: "Проверить прозрачную панель (8 секунд)", target: self, action: #selector(testPanel))
-            controls.addArrangedSubview(test)
-            let help = NSTextField(wrappingLabelWithString: "Для проверки нажмите Control–Command–Q. При разблокировке отсчёт исчезнет.")
+            let actions = NSStackView()
+            actions.spacing = 16
+            actions.addArrangedSubview(test)
+            actions.addArrangedSubview(NSButton(title: "Сбросить расположение", target: self, action: #selector(resetLayout)))
+            controls.addArrangedSubview(actions)
+            let help = NSTextField(wrappingLabelWithString: "Перетаскивайте блоки; Shift — движение по оси. Выделяйте группу рамкой с пустого места или добавляйте блоки с Shift. Положение сохраняется автоматически.")
             help.textColor = NSColor(white: 0.75, alpha: 1)
             help.font = .systemFont(ofSize: 12)
             controls.addArrangedSubview(help)
@@ -144,6 +153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preview?.makeKeyAndOrderFront(nil)
         refresh()
     }
+
+    @objc private func resetLayout() { previewView.resetPositions() }
 
     @objc private func toggleEnabled() {
         enabled.toggle()
@@ -249,12 +260,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func preparePanels() {
         if panels.isEmpty {
             for screen in NSScreen.screens {
-                // Only the middle band is occupied; the clock and native authentication stay clear.
-                let width = min(1150, screen.frame.width * 0.88)
-                let height = min(390, screen.frame.height * 0.39)
-                let rect = NSRect(x: screen.frame.midX - width / 2,
-                                  y: screen.frame.midY - height / 2,
-                                  width: width, height: height)
+                // The system clock is disabled in Lock Screen settings; keep authentication clear below.
+                let rect = CountdownView.overlayFrame(in: screen.frame)
                 let panel = OverlayPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel],
                                          backing: .buffered, defer: false, screen: screen)
                 panel.canBecomeVisibleWithoutLogin = true
@@ -293,5 +300,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let handle = try? FileHandle(forWritingTo: url) else { return }
         defer { try? handle.close() }
         do { try handle.seekToEnd(); try handle.write(contentsOf: data) } catch { }
+    }
+}
+
+/// A vector template remains crisp at every menu-bar scale and follows system appearance.
+enum StatusIcon {
+    static func skull() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            let shape = NSBezierPath()
+            shape.move(to: NSPoint(x: 5, y: 1))
+            shape.line(to: NSPoint(x: 13, y: 1))
+            shape.line(to: NSPoint(x: 13, y: 5))
+            shape.curve(to: NSPoint(x: 16, y: 10), controlPoint1: NSPoint(x: 15, y: 6), controlPoint2: NSPoint(x: 16, y: 7))
+            shape.curve(to: NSPoint(x: 9, y: 17), controlPoint1: NSPoint(x: 16, y: 14), controlPoint2: NSPoint(x: 13, y: 17))
+            shape.curve(to: NSPoint(x: 2, y: 10), controlPoint1: NSPoint(x: 5, y: 17), controlPoint2: NSPoint(x: 2, y: 14))
+            shape.curve(to: NSPoint(x: 5, y: 5), controlPoint1: NSPoint(x: 2, y: 7), controlPoint2: NSPoint(x: 3, y: 6))
+            shape.close()
+            shape.windingRule = .evenOdd
+            shape.appendOval(in: NSRect(x: 4, y: 7, width: 4, height: 4))
+            shape.appendOval(in: NSRect(x: 10, y: 7, width: 4, height: 4))
+            let nose = NSBezierPath()
+            nose.move(to: NSPoint(x: 9, y: 7))
+            nose.line(to: NSPoint(x: 7.5, y: 4.5))
+            nose.line(to: NSPoint(x: 10.5, y: 4.5))
+            nose.close()
+            shape.append(nose)
+            for x in [7.0, 10.0] { shape.appendRect(NSRect(x: x, y: 1, width: 1, height: 2.5)) }
+            NSColor.black.setFill()
+            shape.fill()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Следующий конец света"
+        return image
     }
 }

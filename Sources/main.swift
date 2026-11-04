@@ -48,7 +48,6 @@ if CommandLine.arguments.contains("--probe-space") {
     control.close()
     print("spaceCleanupIssued=\(space != nil)")
 } else if CommandLine.arguments.contains("--diagnose") {
-    AppFont.register()
     let url = Bundle.main.url(forResource: "events", withExtension: "json")!
     let events = try EventCatalog.load(url)
     print("events=\(events.count)")
