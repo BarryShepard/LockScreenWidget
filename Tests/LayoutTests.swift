@@ -141,6 +141,6 @@ final class MemoryPreferences: UserDefaults {
         assert(invalid.size == 6 && invalid.lineHeight == 0 && invalid.spacing == 100 && invalid.alignment == 2)
         print("Typography, migration, information visibility, keyboard steps, and canvas centering passed.")
         print("Dragging, marquee/group selection, Shift axes, and shared edge constraints passed.")
-        print("30 overlay layouts passed: system font, all events, six display sizes.")
+        print("348 overlay layouts passed: system font, all events, six display sizes.")
     }
 }

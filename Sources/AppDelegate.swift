@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panels: [OverlayPanel] = []
     private var statusItem: NSStatusItem?
     private var inspector: TypographyInspector?
+    private var catalogNote: NSTextField?
     private var eventPicker: NSPopUpButton?
     private var enabledButton: NSButton?
     private var enabledMenu: NSMenuItem?
@@ -122,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             row.spacing = 16
             let picker = NSPopUpButton()
             picker.addItem(withTitle: "Ближайшее событие")
-            for event in events { picker.addItem(withTitle: "\(event.date) · \(event.title)") }
+            for event in events { picker.addItem(withTitle: "\(event.displayedDate) · \(event.title)") }
             picker.target = self
             picker.action = #selector(refresh)
             picker.widthAnchor.constraint(lessThanOrEqualToConstant: 520).isActive = true
@@ -133,6 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             enabledButton = button
             row.addArrangedSubview(button)
             controls.addArrangedSubview(row)
+            let catalogNote = NSTextField(wrappingLabelWithString: "")
+            catalogNote.font = .systemFont(ofSize: 11)
+            catalogNote.textColor = .secondaryLabelColor
+            catalogNote.maximumNumberOfLines = 3
+            self.catalogNote = catalogNote
+            controls.addArrangedSubview(catalogNote)
             let test = NSButton(title: "Проверить прозрачную панель (8 секунд)", target: self, action: #selector(testPanel))
             let actions = NSStackView()
             actions.spacing = 16
@@ -187,6 +194,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let index = eventPicker?.indexOfSelectedItem ?? 0
         previewView.event = index > 0 && index <= events.count ? events[index - 1] : EventCatalog.next(in: events, now: now)
         previewView.now = now
+        if let event = previewView.event {
+            let note = "Срок: \(event.displayedDate). " + (event.hasCountdown
+                ? "Отсчёт до 00:00 по Москве. Выбор меняет только предпросмотр."
+                : "Точный день не указан. Карточка доступна для просмотра без секундного отсчёта.")
+            if catalogNote?.stringValue != note { catalogNote?.stringValue = note }
+        }
         let actual = readLockState() ?? false
         if actual != locked {
             log("lock-poll=\(actual)")
@@ -308,12 +321,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSource() {
-        if let event = EventCatalog.next(in: events, now: Date()) { NSWorkspace.shared.open(event.sourceURL) }
+        let event = preview?.isVisible == true ? previewView.event : EventCatalog.next(in: events, now: Date())
+        if let event { NSWorkspace.shared.open(event.sourceURL) }
     }
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func log(_ message: String) {
-        let url = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("TEotW-diagnostics.log")
+        guard let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        let directory = library.appendingPathComponent("Logs/TEotW", isDirectory: true)
+        do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) } catch { return }
+        let url = directory.appendingPathComponent("diagnostics.log")
         let data = Data("\(ISO8601DateFormatter().string(from: Date())) \(message)\n".utf8)
         if !FileManager.default.fileExists(atPath: url.path) { try? data.write(to: url); return }
         guard let handle = try? FileHandle(forWritingTo: url) else { return }

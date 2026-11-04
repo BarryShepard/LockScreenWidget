@@ -4,11 +4,24 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$PROJECT_DIR/build/TEotW.app"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources/Fonts" "$PROJECT_DIR/build/ModuleCache"
 test -f "$PROJECT_DIR/Resources/Fonts/Manrope.ttf"
-/usr/bin/swiftc -swift-version 5 -module-cache-path "$PROJECT_DIR/build/ModuleCache" \
-  -target arm64-apple-macosx15.0 -framework AppKit -framework CoreText -framework CoreGraphics \
-  "$PROJECT_DIR/Sources/Core.swift" "$PROJECT_DIR/Sources/EditorSettings.swift" "$PROJECT_DIR/Sources/CountdownView.swift" \
-  "$PROJECT_DIR/Sources/SkullIcon.swift" "$PROJECT_DIR/Sources/TypographyInspector.swift" "$PROJECT_DIR/Sources/LockScreenSpace.swift" "$PROJECT_DIR/Sources/AppDelegate.swift" "$PROJECT_DIR/Sources/main.swift" \
-  -o "$APP_DIR/Contents/MacOS/TEotW"
+ARCHITECTURES=(arm64)
+if [[ "${1:-}" == "--universal" ]]; then
+  ARCHITECTURES=(arm64 x86_64)
+elif [[ -n "${1:-}" ]]; then
+  printf 'Usage: %s [--universal]\n' "$0" >&2
+  exit 2
+fi
+BINARIES=()
+for architecture in "${ARCHITECTURES[@]}"; do
+  binary="$PROJECT_DIR/build/TEotW-$architecture"
+  /usr/bin/swiftc -swift-version 5 -O -module-cache-path "$PROJECT_DIR/build/ModuleCache" \
+    -target "$architecture-apple-macosx15.0" -framework AppKit -framework CoreText -framework CoreGraphics \
+    "$PROJECT_DIR/Sources/Core.swift" "$PROJECT_DIR/Sources/EditorSettings.swift" "$PROJECT_DIR/Sources/CountdownView.swift" \
+    "$PROJECT_DIR/Sources/SkullIcon.swift" "$PROJECT_DIR/Sources/TypographyInspector.swift" "$PROJECT_DIR/Sources/LockScreenSpace.swift" "$PROJECT_DIR/Sources/AppDelegate.swift" "$PROJECT_DIR/Sources/main.swift" \
+    -o "$binary"
+  BINARIES+=("$binary")
+done
+/usr/bin/lipo -create "${BINARIES[@]}" -output "$APP_DIR/Contents/MacOS/TEotW"
 /usr/bin/swiftc -swift-version 5 -module-cache-path "$PROJECT_DIR/build/ModuleCache" -framework AppKit \
   "$PROJECT_DIR/Sources/SkullIcon.swift" "$PROJECT_DIR/scripts/GenerateIcon.swift" -o "$PROJECT_DIR/build/GenerateIcon"
 "$PROJECT_DIR/build/GenerateIcon" "$PROJECT_DIR/build/AppIcon.iconset"
@@ -27,8 +40,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>Следующий конец света</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.4.0</string>
+<key>CFBundleVersion</key><string>4</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSUIElement</key><true/>

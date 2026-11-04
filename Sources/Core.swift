@@ -8,7 +8,24 @@ struct ApocalypseEvent: Codable {
     let source: String
     let sourceURL: URL
 
-    var target: Date { Self.parseDay(date)! }
+    let dateLabel: String?
+    let countdownEnabled: Bool?
+    let reviewStatus: String?
+    let reviewNote: String?
+    let caveat: String?
+    let researchTitle: String?
+    let researchNumber: Int?
+
+    var hasCountdown: Bool { countdownEnabled ?? (Self.parseDay(date) != nil) }
+    // Non-countdown cards never enter the queue; their textual dates are preserved verbatim.
+    var target: Date { Self.parseDay(date) ?? .distantFuture }
+    var displayedDate: String { dateLabel ?? date }
+    var information: String {
+        [explanation, caveat, reviewNote].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+    func counterText(now: Date) -> String {
+        hasCountdown ? Countdown.string(until: target, now: now) : displayedDate
+    }
 
     static func parseDay(_ value: String) -> Date? {
         let componentsText = value.split(separator: "-", omittingEmptySubsequences: false)
@@ -30,17 +47,22 @@ enum EventCatalog {
     static func load(_ url: URL) throws -> [ApocalypseEvent] {
         let events = try JSONDecoder().decode([ApocalypseEvent].self, from: Data(contentsOf: url))
         guard !events.isEmpty, Set(events.map(\.id)).count == events.count,
-              events.allSatisfy({ ApocalypseEvent.parseDay($0.date) != nil &&
+              events.allSatisfy({ ($0.hasCountdown ? ApocalypseEvent.parseDay($0.date) != nil :
+                    ($0.countdownEnabled == false && !$0.date.isEmpty && $0.reviewStatus != nil)) &&
                   !$0.title.isEmpty && !$0.explanation.isEmpty && !$0.source.isEmpty &&
                   $0.sourceURL.scheme == "https" && $0.sourceURL.host != nil }) else {
             throw NSError(domain: "TEotW.Catalog", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Не удалось проверить даты и источники каталога."])
         }
-        return events.sorted { $0.target < $1.target }
+        return events.enumerated().sorted {
+            if $0.element.hasCountdown != $1.element.hasCountdown { return $0.element.hasCountdown }
+            if $0.element.hasCountdown { return $0.element.target < $1.element.target }
+            return $0.offset < $1.offset
+        }.map(\.element)
     }
 
     static func next(in events: [ApocalypseEvent], now: Date) -> ApocalypseEvent? {
-        events.filter { $0.target > now }.min { $0.target < $1.target }
+        events.filter { $0.hasCountdown && $0.target > now }.min { $0.target < $1.target }
     }
 }
 

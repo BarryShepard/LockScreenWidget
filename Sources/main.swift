@@ -51,6 +51,8 @@ if CommandLine.arguments.contains("--probe-space") {
     let url = Bundle.main.url(forResource: "events", withExtension: "json")!
     let events = try EventCatalog.load(url)
     print("events=\(events.count)")
+    print("countdowns=\(events.filter(\.hasCountdown).count)")
+    print("periodCards=\(events.filter { !$0.hasCountdown }.count)")
     print("font=\(AppFont.font(20).fontName)")
     if let next = EventCatalog.next(in: events, now: Date()) {
         print("next=\(next.id) countdown=\(Countdown.string(until: next.target, now: Date()))")

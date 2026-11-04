@@ -302,15 +302,19 @@ final class CountdownView: NSView {
         let scale = min(area.width / 1512, area.height / 982)
         let availableWidth = max(1, area.width * 0.88 - 32 * scale)
         let title = event?.title ?? "Новых предсказаний пока нет"
-        let timer = event.map { Countdown.string(until: $0.target, now: now) } ?? "00:00:00"
-        let information = event.map { $0.explanation + "\n\n" + $0.source }
+        let timer = event?.counterText(now: now) ?? "00:00:00"
+        let information = event.map { $0.information + "\n\n" + $0.source }
             ?? "Все назначенные даты прошли. Планета продолжает работу."
         let texts = [title, timer, information]
         var runs: [TextRun] = []
         var defaultY: CGFloat = 10 * scale
         for index in settings.visibleIndices {
-            let typography = settings.typography[index]
-            let attributes = style(typography, scale: scale, digits: index == 1)
+            var typography = settings.typography[index]
+            if index == 1, event?.hasCountdown == false {
+                // A period is a label, never a fabricated ticking deadline.
+                typography.size = min(typography.size, 42)
+            }
+            let attributes = style(typography, scale: scale, digits: index == 1 && (event?.hasCountdown ?? true))
             let text = texts[index]
             let measuredWidth = (text as NSString).size(withAttributes: attributes).width
             let preferredWidth: CGFloat = index == 0 ? 740 : (index == 1 ? 620 : 810)
