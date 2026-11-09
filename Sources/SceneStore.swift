@@ -1,18 +1,33 @@
 import AppKit
+import Darwin
 
 final class SceneStore {
     private let documentURL: URL
     private let assetsURL: URL
+    private let assetsDevice: dev_t
+    private let assetsInode: ino_t
     private let fileManager = FileManager.default
 
     init(directory: URL) throws {
         documentURL = directory.appendingPathComponent("scene.json", isDirectory: false)
         assetsURL = directory.appendingPathComponent("Assets", isDirectory: true)
         do {
-            try fileManager.createDirectory(at: assetsURL, withIntermediateDirectories: true)
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            // mkdir does not follow an existing Assets symbolic link.
+            if mkdir(assetsURL.path, S_IRWXU) != 0 && errno != EEXIST {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
         } catch {
             throw SceneError.storage("Не удалось создать папку документа и изображений.", error)
         }
+        let descriptor = try Self.openAssetsDirectory(at: assetsURL)
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else {
+            throw SceneError.invalid("Не удалось проверить папку изображений документа.")
+        }
+        assetsDevice = info.st_dev
+        assetsInode = info.st_ino
     }
 
     static func defaultDirectory() throws -> URL {
@@ -77,26 +92,72 @@ final class SceneStore {
             throw SceneError.invalid("Не удалось открыть изображение: файл повреждён или его формат не поддерживается.")
         }
         let assetID = UUID().uuidString
+        let directory = try assetsDirectoryDescriptor()
+        defer { close(directory) }
+        let descriptor = openat(directory, assetID, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                                S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else {
+            throw SceneError.invalid("Не удалось создать копию изображения в документе.")
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
         do {
-            try data.write(to: assetsURL.appendingPathComponent(assetID), options: .atomic)
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
         } catch {
+            unlinkat(directory, assetID, 0)
             throw SceneError.storage("Не удалось сохранить копию изображения в документе.", error)
         }
         return assetID
     }
 
     func imageURL(for assetID: String) -> URL? {
-        guard EditorScene.isSafeAssetID(assetID) else { return nil }
-        let url = assetsURL.appendingPathComponent(assetID, isDirectory: false)
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
-        return url
+        guard let descriptor = imageDescriptor(for: assetID) else { return nil }
+        defer { close(descriptor) }
+        return assetsURL.appendingPathComponent(assetID, isDirectory: false)
     }
 
     func image(for assetID: String) -> NSImage? {
-        guard let url = imageURL(for: assetID), let image = NSImage(contentsOf: url), image.isValid else {
+        guard let descriptor = imageDescriptor(for: assetID) else { return nil }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        guard let data = try? handle.readToEnd(), let image = NSImage(data: data), image.isValid else {
             return nil
         }
         return image
+    }
+
+    private static func openAssetsDirectory(at url: URL) throws -> Int32 {
+        let descriptor = open(url.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            throw SceneError.invalid("Папка изображений должна быть обычной папкой, а не символической ссылкой.")
+        }
+        return descriptor
+    }
+
+    private func assetsDirectoryDescriptor() throws -> Int32 {
+        let descriptor = try Self.openAssetsDirectory(at: assetsURL)
+        var info = stat()
+        guard fstat(descriptor, &info) == 0,
+              info.st_dev == assetsDevice, info.st_ino == assetsInode else {
+            close(descriptor)
+            throw SceneError.invalid("Папка изображений документа была заменена. Откройте документ заново.")
+        }
+        return descriptor
+    }
+
+    private func imageDescriptor(for assetID: String) -> Int32? {
+        guard EditorScene.isSafeAssetID(assetID), let directory = try? assetsDirectoryDescriptor() else {
+            return nil
+        }
+        defer { close(directory) }
+        let descriptor = openat(directory, assetID, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
+            close(descriptor)
+            return nil
+        }
+        return descriptor
     }
 }

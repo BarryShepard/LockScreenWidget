@@ -15,6 +15,83 @@ import AppKit
         }
     }
 
+    static func checkAssetsBoundary(imageData: Data) throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? files.removeItem(at: root) }
+        let target = root.appendingPathComponent("outside-store")
+        try files.createDirectory(at: target, withIntermediateDirectories: true)
+        let targetID = "target-image"
+        let targetImage = target.appendingPathComponent(targetID)
+        try imageData.write(to: targetImage)
+        let targetContents = try files.contentsOfDirectory(atPath: target.path)
+        let scene = EditorScene(canvasSize: CGSize(width: 500, height: 300))
+        let sceneData = try JSONEncoder().encode(scene)
+
+        let linkedRoot = root.appendingPathComponent("preexisting-link")
+        try files.createDirectory(at: linkedRoot, withIntermediateDirectories: true)
+        let linkedDocument = linkedRoot.appendingPathComponent("scene.json")
+        try sceneData.write(to: linkedDocument)
+        try files.createSymbolicLink(at: linkedRoot.appendingPathComponent("Assets"), withDestinationURL: target)
+        expectFailure { _ = try SceneStore(directory: linkedRoot) }
+        check(try Data(contentsOf: linkedDocument) == sceneData, "Rejecting Assets must preserve an existing document")
+
+        let danglingRoot = root.appendingPathComponent("dangling-link")
+        try files.createDirectory(at: danglingRoot, withIntermediateDirectories: true)
+        let missingTarget = root.appendingPathComponent("must-not-be-created")
+        try files.createSymbolicLink(at: danglingRoot.appendingPathComponent("Assets"), withDestinationURL: missingTarget)
+        expectFailure { _ = try SceneStore(directory: danglingRoot) }
+        assert(!files.fileExists(atPath: missingTarget.path), "Initialization must not create a symlink target")
+
+        let fileRoot = root.appendingPathComponent("assets-is-file")
+        try files.createDirectory(at: fileRoot, withIntermediateDirectories: true)
+        let assetsFile = fileRoot.appendingPathComponent("Assets")
+        try imageData.write(to: assetsFile)
+        expectFailure { _ = try SceneStore(directory: fileRoot) }
+        check(try Data(contentsOf: assetsFile) == imageData)
+
+        let validRoot = root.appendingPathComponent("valid-store")
+        let store = try SceneStore(directory: validRoot)
+        try store.save(scene)
+        let validDocument = validRoot.appendingPathComponent("scene.json")
+        let savedDocument = try Data(contentsOf: validDocument)
+        let assetID = try store.importImage(data: imageData)
+        let assets = validRoot.appendingPathComponent("Assets")
+        let preservedAssets = validRoot.appendingPathComponent("OriginalAssets")
+        try files.moveItem(at: assets, to: preservedAssets)
+        try files.createSymbolicLink(at: assets, withDestinationURL: target)
+        expectFailure { _ = try store.importImage(data: imageData) }
+        assert(store.imageURL(for: targetID) == nil && store.image(for: targetID) == nil,
+               "Replacing Assets with a symlink must not expose target images")
+        assert(store.imageURL(for: assetID) == nil && store.image(for: assetID) == nil)
+        expectFailure { _ = try SceneStore(directory: validRoot) }
+        check(try store.load() == scene)
+        check(try Data(contentsOf: validDocument) == savedDocument)
+        check(try files.contentsOfDirectory(atPath: target.path) == targetContents,
+              "Failed imports must not write to a symlink target")
+        check(try Data(contentsOf: targetImage) == imageData)
+        try files.removeItem(at: assets)
+
+        // Also reject a replacement real directory and a missing Assets path.
+        try files.createDirectory(at: assets, withIntermediateDirectories: false)
+        try imageData.write(to: assets.appendingPathComponent(targetID))
+        expectFailure { _ = try store.importImage(data: imageData) }
+        assert(store.imageURL(for: targetID) == nil && store.image(for: targetID) == nil)
+        try files.removeItem(at: assets)
+        expectFailure { _ = try store.importImage(data: imageData) }
+        assert(store.image(for: assetID) == nil)
+        assert(!files.fileExists(atPath: assets.path), "Asset operations must not recreate a replaced directory")
+
+        try files.moveItem(at: preservedAssets, to: assets)
+        assert(store.image(for: assetID)?.isValid == true, "Original assets must survive and recover after restoration")
+        let newID = try store.importImage(data: imageData)
+        assert(store.image(for: newID)?.isValid == true)
+        check(try store.load() == scene)
+        check(try Data(contentsOf: validDocument) == savedDocument)
+        check(try files.contentsOfDirectory(atPath: target.path) == targetContents)
+        check(try Data(contentsOf: targetImage) == imageData)
+    }
+
     static func main() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -34,6 +111,7 @@ import AppKit
             }
         }
         let imageData = bitmap.representation(using: .png, properties: [:])!
+        try checkAssetsBoundary(imageData: imageData)
         let sourceURL = directory.appendingPathComponent("original.png")
         try imageData.write(to: sourceURL)
         let assetID = try store.importImage(at: sourceURL)
@@ -138,5 +216,6 @@ import AppKit
 
         print("Scene checks passed: style/geometry round trip, font fallback, independent styles, schema and numeric validation.")
         print("Store checks passed: durable original image bytes, unique imports, safe IDs, missing assets, atomic save preservation, corrupt document errors.")
+        print("Asset boundary checks passed: existing/dangling directory symlinks, file and post-init replacement rejection, untouched targets, preserved store recovery.")
     }
 }
