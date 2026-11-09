@@ -25,3 +25,6 @@ done
   "$PROJECT_DIR/Sources/SceneModel.swift" "$PROJECT_DIR/Sources/SceneStore.swift" \
   "$PROJECT_DIR/Tests/SceneTests.swift" -o "$PROJECT_DIR/build/SceneTests"
 "$PROJECT_DIR/build/SceneTests"
+"$SWIFTC" "${COMMON[@]}" -framework AppKit "$PROJECT_DIR"/Sources/Scene*.swift \
+  "$PROJECT_DIR/Tests/SceneEditingTests.swift" -o "$PROJECT_DIR/build/SceneEditingTests"
+"$PROJECT_DIR/build/SceneEditingTests"

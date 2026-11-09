@@ -63,6 +63,8 @@ struct SceneElement: Codable, Equatable, Identifiable {
     var cornerRadius: Double
     var opacity: Double
     var text: String
+    /// Absent in older documents, which retain their explicit frame width.
+    var autoTextWidth: Bool? = nil
     var style: SceneTextStyle
     var assetID: String?
     /// Image placement in element-local, top-left-origin logical points.
