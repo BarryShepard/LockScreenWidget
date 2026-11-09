@@ -49,13 +49,13 @@ if CommandLine.arguments.contains("--probe-space") {
     print("spaceCleanupIssued=\(space != nil)")
 } else if CommandLine.arguments.contains("--diagnose") {
     let url = Bundle.main.url(forResource: "events", withExtension: "json")!
-    let events = try EventCatalog.load(url)
-    print("events=\(events.count)")
-    print("countdowns=\(events.filter(\.hasCountdown).count)")
-    print("periodCards=\(events.filter { !$0.hasCountdown }.count)")
-    print("font=\(AppFont.font(20).fontName)")
-    if let next = EventCatalog.next(in: events, now: Date()) {
-        print("next=\(next.id) countdown=\(Countdown.string(until: next.target, now: Date()))")
+    let events = try loadEventCatalog(url)
+    print("events=\(events.events.count)")
+    print("countdowns=\(events.events.filter(eventHasCountdown).count)")
+    print("periodCards=\(events.events.filter { !eventHasCountdown($0) }.count)")
+    print("font=\(NSFont.systemFont(ofSize: 20, weight: .bold).fontName)")
+    if let next = selectNextEvent(in: events, now: Date()) {
+        print("next=\(next.id) countdown=\(calculateCountdown(until: eventTarget(next), now: Date()))")
     }
     let session = CGSessionCopyCurrentDictionary() as? [String: Any]
     let hasLockKey = session?["CGSSessionScreenIsLocked"] != nil
