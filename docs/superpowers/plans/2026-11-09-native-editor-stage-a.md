@@ -104,7 +104,7 @@ assert(store.imageURL(for: "../scene.json") == nil)
 
 ## Task 3: Native editor, inspector, clipboard and reusable renderer
 
-**Files:** Create focused files under `Sources/Scene…swift` for editor controller, canvas/input, rendering, inspector and editing state. Add `Tests/SceneEditingTests.swift` and its compilation to `scripts/test.sh`. Do not edit AppDelegate/main/build scripts; integration is Task 4.
+**Files:** Create focused files under `Sources/Scene…swift` for editor controller, canvas/input, rendering, inspector and editing state. Add `Tests/SceneEditingTests.swift` and its compilation to `scripts/test.sh`. Extend `Sources/SceneModel.swift` with the backward-compatible optional `var autoTextWidth: Bool? = nil`; nil means fixed width for existing documents. Preserve schema version 1 and test round-trip plus missing-key decode. Do not edit AppDelegate/main/build scripts; integration is Task 4.
 
 **Interfaces:** Consumes Task 1's scene/store and Task 2's adopted MVC checkout. Produces:
 
@@ -116,6 +116,7 @@ final class SceneEditorWindowController: NSWindowController {
     var onRevealLegacy: (() -> Void)?
     func showEditor()
     func setPersistenceBlocked(_ message: String)
+    func flush()
 }
 final class SceneDisplayView: NSView {
     init(scene: EditorScene, store: SceneStore)
@@ -142,7 +143,7 @@ final class SceneDisplayView: NSView {
 **Interfaces:** Uses Task 1 store and Task 3 editor/display view unchanged, plus the adopted legacy MVC controllers. Adds store/controller properties to AppDelegate.
 
 - [ ] Build script includes new source files exactly once. Preserve existing `--diagnose` and `--probe-space` and universal architecture option. Do not rewrite catalog or research files.
-- [ ] On startup resolve/load the scene once; create an empty scene sized to the main screen only when no scene exists. If load fails, create only an in-memory editing scene and call `setPersistenceBlocked(_:)` before showing the editor; do not overwrite the bad file on later edits/close/quit. Retain a way to reach the legacy countdown editor from the status menu. New editor is the primary window/status-menu action.
+- [ ] On startup resolve/load the scene once; create an empty scene sized to the main screen only when no scene exists. If load fails, create only an in-memory editing scene and call `setPersistenceBlocked(_:)` before showing the editor; do not overwrite the bad file on later edits/close/quit. Call the new editor’s `flush()` before application termination. Retain a way to reach the legacy countdown editor from the status menu. New editor is the primary window/status-menu action.
 - [ ] Main menu has a standard Edit menu with nil-target responder actions: undo Cmd+Z, redo Cmd+Shift+Z, copy/cut/paste Cmd+C/X/V, selectAll Cmd+A, duplicate Cmd+D, layer order Cmd+[ / ] and Cmd+Shift+[ / ]. Native NSTextView/NSTextField receive their normal commands rather than canvas actions when focused. Apply field input before losing focus to structural commands.
 - [ ] Route committed scene changes to overlay rendering using SceneDisplayView on the selected/main screen. No editor handles or guides appear on the overlay. Preserve existing lock detection, retries, non-key input-transparent panels, hide-first cleanup, test panel and diagnostics. First-run fallback before a new scene has been saved may show the legacy countdown; once the user saves a scene (including an intentionally empty one), do not silently revert to old content. Do not attach a scene to a different external screen because it happens to be first in an array.
 - [ ] Run `bash scripts/test.sh`, `bash scripts/build.sh`, and `build/TEotW.app/Contents/MacOS/TEotW --diagnose`. Resolve compile/test failures before UI checks. Only use temporary dirs/private pasteboards for automated tests.
