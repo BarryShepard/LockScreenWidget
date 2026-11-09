@@ -78,11 +78,35 @@ assert(store.imageURL(for: "../scene.json") == nil)
 
 - [ ] Self-review and commit only the four owned files; record test command/output and exact interfaces in the task report.
 
-## Task 2: Native editor, inspector, clipboard and reusable renderer
+## Task 2: Adopt and verify colleague MVC refactor
 
-**Files:** Create focused files under `Sources/Scene…swift` for editor controller, canvas/input, rendering, inspector and editing state. Add `Tests/SceneEditingTests.swift` and its compilation to `scripts/test.sh`. Do not edit AppDelegate/main/build scripts; integration is Task 3.
+**Files:** Changes from colleague commit `3eecd16ce7b3d556c64e9dddf529d1517ba1c62b` (PR1), especially `Sources/{Models,Views,Controllers,Infrastructure}`, `Sources/AppDelegate.swift`, `Sources/main.swift`, README, scripts and legacy tests. Preserve all Task 1 scene/store/test files and the new spec/plan.
 
-**Interfaces:** Consumes Task 1's scene/store. Produces:
+**Interfaces:** New legacy APIs replace old root paths: `ApplicationModel`, `EditorWindowController`, `LockScreenController`, `CountdownController`, `BlockTypographyModel`, `loadEventCatalog(_:)`, `selectNextEvent(in:now:)`. New scene APIs remain exactly as Task 1 defined. `SceneTextStyle` must not depend on the removed root `BlockTypography` type.
+
+- [ ] Read `colleague-pr-review.md` in this plan's SDD workspace and adopt the fetched exact commit locally with `git cherry-pick 3eecd16ce7b3d556c64e9dddf529d1517ba1c62b`. Resolve README/test-script conflicts by preserving both MVC documentation/testing and the new scene suite/spec link. No remote merge/push.
+- [ ] Fix the verified editor-open regression in `Sources/Controllers/EditorWindowController.swift`:
+
+```swift
+@objc func showPreview() {
+    if window == nil { loadWindow() }
+    NSApp.activate(ignoringOtherApps: true)
+    window?.makeKeyAndOrderFront(nil)
+    refresh(at: Date())
+}
+```
+
+`isWindowLoaded` is not a usable window-existence guard for this no-nib controller. Existing `LockScreenControllerTests` line51 already catches the bug on this Mac. Preserve that assertion rather than deleting it.
+
+- [ ] Run `bash scripts/test.sh`, including Task 1's SceneTests and the PR's CoreTests/SettingsTests/LayoutTests/LockScreenControllerTests; run `bash scripts/build.sh --universal` and the app diagnostic. Root's scratch check already confirmed original PR builds universally and this exact fix makes the focused lifecycle test pass; validate the combined working branch once.
+- [ ] Record runtime output accurately: one AppKit `IOPMScheduleUserActivityLevelNotification returned 0` informational system line is present in CLI lifecycle tests and must be reported, without asserting pristine output. Keep MVC verification documentation honest about additional Mac evidence; no claim of secure-lock validation.
+- [ ] Commit scoped follow-up fixes/documentation, write exact resolved source paths and test evidence in report. Do not change the new scene interfaces or implement the scene editor in this task.
+
+## Task 3: Native editor, inspector, clipboard and reusable renderer
+
+**Files:** Create focused files under `Sources/Scene…swift` for editor controller, canvas/input, rendering, inspector and editing state. Add `Tests/SceneEditingTests.swift` and its compilation to `scripts/test.sh`. Do not edit AppDelegate/main/build scripts; integration is Task 4.
+
+**Interfaces:** Consumes Task 1's scene/store and Task 2's adopted MVC checkout. Produces:
 
 ```swift
 final class SceneEditorWindowController: NSWindowController {
@@ -106,15 +130,15 @@ final class SceneDisplayView: NSView {
 - [ ] Implement the “Добавить” dropdown with “Текст” and “Фото с устройства…”, Undo/Redo, layers list and a sidebar. No separate always-on select tool button. T arms text creation: click makes automatic-width text, drag makes fixed-width text; insert starts native NSTextView editing. Double click/Enter edits all text, newline works, Escape commits. Clear text and newly-created-empty-text behavior follows spec. Do not redraw/recreate an active NSTextView every selection update. In-field commands stay with native fields, including Cyrillic/IME input.
 - [ ] Sidebar edits name, X/Y/W/H and typography (family, weight, size, color, line height, letter spacing, horizontal/vertical alignment, opacity). Group edits change only the chosen property; mixed values do not reset unrelated styles. Store all settings in the scene. Use the existing BlockTypography font behavior where appropriate without changing legacy preferences.
 - [ ] Add local-file import with NSOpenPanel, real NSPasteboard image decoding (PNG/TIFF/file URLs as available), and NSDraggingDestination file drop. Explicit Add always adds. Enter/double-click an image opens a replacement picker. Clipboard with one selected image replaces; clipboard elsewhere adds. File drop on an image replaces that hit-tested target; drop elsewhere adds. Plain text clipboard inserts a text element; internal element copy has its own pasteboard type. Broken or cancelled input leaves prior content unchanged. Import copies originals through SceneStore. Error presentation is inline.
-- [ ] Wire native responder commands `copy:`, `cut:`, `paste:`, `selectAll:`, `deleteBackward:`, `duplicate:` and Undo/Redo; key routing must not hijack fields. Use command menus in Task 3 for Cmd shortcuts. Support both English and Russian keyboard layouts via native equivalents and physical tool key codes where needed. Do not use a global key monitor or system permissions.
+- [ ] Wire native responder commands `copy:`, `cut:`, `paste:`, `selectAll:`, `deleteBackward:`, `duplicate:` and Undo/Redo; key routing must not hijack fields. Use command menus in Task 4 for Cmd shortcuts. Support both English and Russian keyboard layouts via native equivalents and physical tool key codes where needed. Do not use a global key monitor or system permissions.
 - [ ] Add system guide controls (master, separate clock toggle); draw approximations only in editor, never in overlay. Selected display geometry defaults to the main screen. Saving is atomic after committed actions and debounced during typing; flush on close. If a write fails, show an inline error and preserve in-memory edits and the last valid disk scene.
 - [ ] Compile all new sources plus existing non-main sources and run `bash scripts/test.sh`; include UI source typecheck, model/editing evidence in report. Commit only owned files and test script. Record any native/manual checks not yet performed as pending.
 
-## Task 3: App integration, native smoke test and delivery checklist
+## Task 4: App integration, native smoke test and delivery checklist
 
-**Files:** Modify `Sources/AppDelegate.swift`, `Sources/main.swift` only if diagnostics need it, `scripts/build.sh`, README/CHANGELOG; create `docs/native-editor-stage-a-verification.md`. Minimal corrections to Scene sources only when integration requires them; preserve the documented public interfaces.
+**Files:** Modify `Sources/AppDelegate.swift`, `Sources/Controllers/LockScreenController.swift`, `Sources/main.swift` only if diagnostics need it, `scripts/build.sh`, README/CHANGELOG; create `docs/native-editor-stage-a-verification.md`. Minimal corrections to Scene sources only when integration requires them; preserve the documented public interfaces.
 
-**Interfaces:** Uses Task 1 store and Task 2 editor/display view unchanged. Adds store/controller properties to AppDelegate.
+**Interfaces:** Uses Task 1 store and Task 3 editor/display view unchanged, plus the adopted legacy MVC controllers. Adds store/controller properties to AppDelegate.
 
 - [ ] Build script includes new source files exactly once. Preserve existing `--diagnose` and `--probe-space` and universal architecture option. Do not rewrite catalog or research files.
 - [ ] On startup resolve/load the scene once; create an empty scene sized to the main screen only when no scene exists. If load fails, show an editor error without overwriting the bad file. Retain a way to reach the legacy countdown editor from the status menu. New editor is the primary window/status-menu action.
