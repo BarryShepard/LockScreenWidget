@@ -71,7 +71,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
     override func loadWindow() { window = EditorWindow(content: editorView) }
 
     @objc func showPreview() {
-        if !isWindowLoaded { loadWindow() }
+        if window == nil { loadWindow() }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         refresh(at: Date())

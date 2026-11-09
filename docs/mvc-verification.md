@@ -1,6 +1,6 @@
 # MVC refactoring verification — 2026-11-09
 
-Baseline: `258dbbf`. Working branch: `codex/mvc-refactor`.
+Original MVC baseline: `258dbbf`; colleague head: `3eecd16ce7b3d556c64e9dddf529d1517ba1c62b`. Adopted locally as `52770a1` on `codex/personal-lockscreen-editor`, above the scene/store foundation. No remote merge or push.
 
 ## Scope implemented
 
@@ -13,15 +13,15 @@ Baseline: `258dbbf`. Working branch: `codex/mvc-refactor`.
 
 ## Local verification
 
-This checkout was edited on Windows. `swiftc` is not installed, Bash is unavailable, and WSL has no installed distribution. There is no macOS/AppKit SDK. Consequently, neither the original baseline nor the refactored Swift test suites or app build could be executed here. No passing Swift tests or successful native build is claimed.
+The author originally checked grammar and whitespace on Windows without executing Swift. The corrected combined checkout was subsequently tested natively on 2026-11-09, macOS 15.7.3 (24G419), Apple Silicon arm64, Apple Swift 6.1.2. The no-nib `EditorWindowController` now creates its initial programmatic window when `window == nil`; `isWindowLoaded` cannot establish window existence for this controller.
 
-Available checks:
-
-- Tree-sitter parsed the Swift sources, tests, icon generator and Bash scripts without syntax errors. This checks grammar, not Swift type checking, AppKit selectors or linking.
-- `git diff --check` found no whitespace errors.
-- Reviewed the model storage field names and old-format fixture, unchanged resources/SkyLight implementation, source paths and architecture boundaries.
-
-Test sources were updated before their corresponding extraction, but a runtime RED/GREEN cycle could not be observed without Swift. Native validation below remains required before accepting the refactor as working on macOS.
+- `bash scripts/test.sh`: exit 0. CoreTests, SettingsTests, LayoutTests (348 layouts), LockScreenControllerTests, and SceneTests all passed. The lifecycle suite retains its first-open visible-window assertion and hide/defer/restore assertions; timers, lock-state reads and panel creation are injected.
+- The lifecycle run emitted one AppKit informational system line: `IOPMScheduleUserActivityLevelNotification returned 0`. The output was not pristine; this line did not fail the suite.
+- `bash scripts/build.sh --universal`: exit 0; `lipo -archs` reports `x86_64 arm64`; `codesign --verify --deep --strict` exits 0. The build replaced the local ad-hoc signature.
+- `build/TEotW.app/Contents/MacOS/TEotW --diagnose`: exit 0; `events=58`, `countdowns=19`, `periodCards=39`, `font=.AppleSystemUIFontBold`, next event `foerster-2026-11-13`, `lockStateKeyPresent=false`. This unlocked-session diagnostic does not exercise protected-screen visibility.
+- `git diff --check`: exit 0.
+- SceneTests passed model/style/geometry validation, durable asset import, atomic-save preservation, corrupt-document reporting and asset-directory boundary checks. Scene/store interfaces and their tests remain unchanged.
+- Test preferences are in-memory; scene/store tests use temporary directories. No existing user settings, scene files or clipboard contents were changed.
 
 ## Automated verification on macOS
 
@@ -38,7 +38,8 @@ Expected suites:
 - `CoreTests`: Moscow date parsing, fractional seconds, total hours, exact expiry, next-event selection, exhausted catalog, period cards, duplicate IDs.
 - `SettingsTests`: a literal JSON payload from the old schema, identical JSON round-trip, old coordinate migration, invalid payload fallback, nonfinite values and numeric input.
 - `LayoutTests`: 348 layouts, dragging and marquee selection, Shift locking, group edge constraints, typography and line height, visibility, keyboard movement, centering, live inspector input, persistence through controller actions, shared tick and preview-only card selection.
-- `LockScreenControllerTests`: repeated-test deadlines, lock/unlock interruption and editor restoration, disabling and shutdown. Screen creation and delayed scheduling are injected; these checks do not create a private SkyLight space.
+- `LockScreenControllerTests`: first editor open, repeated-test deadlines, lock/unlock interruption and editor restoration, disabling and shutdown. Screen creation and delayed scheduling are injected; these checks do not create a private SkyLight space.
+- `SceneTests`: the new scene model and filesystem store, including corrupt documents and symlink-boundary rejection. This separate suite requires AppKit and runs alongside all MVC suites on macOS.
 
 The build command compiles arm64 and x86_64, generates the app icon and signs the local bundle ad-hoc. It does not publish a release.
 
@@ -56,6 +57,6 @@ The build command compiles arm64 and x86_64, generates the app icon and signs th
 
 ## Independent review
 
-A separate reviewer inspected all sources/tests against `258dbbf` and the specification. The review found one regression: cancelling a panel test on lock discarded the editor's pending restoration. The implementation now distinguishes restoration, deferral until unlock, and discard on shutdown. Session deactivation defers restoration; reactivation rechecks lock state. A dedicated controller test covers restoration and stale timeout cancellation. These new tests are prepared but were not executable on this Windows host.
+A separate reviewer inspected all sources/tests against `258dbbf` and the specification. The review found one regression: cancelling a panel test on lock discarded the editor's pending restoration. The implementation now distinguishes restoration, deferral until unlock, and discard on shutdown. Session deactivation defers restoration; reactivation rechecks lock state. A dedicated controller test covers restoration and stale timeout cancellation. These controller tests now pass on the native Mac checkout. A later native review found the no-nib first-open regression; correcting its window-existence guard made the existing visibility assertion pass. See the local verification above.
 
-Status: native build, automated Swift tests, and manual macOS acceptance are pending.
+Status: all combined automated Swift suites pass. Universal build and diagnostic results are recorded above. Manual application launch, close/reopen through the menu, real field-editor/caret/IME behavior, protected-screen visibility, interruption ordering, multiple displays and sleep/wake remain pending; no secure-lock validation is claimed.
