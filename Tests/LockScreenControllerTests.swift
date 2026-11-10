@@ -79,6 +79,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         editor.close()
         try checkSceneIntegration(model: model)
         try checkTextPersistence(model: model)
+        try checkMarkedTextPersistence(model: model)
         print("Panel lifecycle checks passed: repeated tests, lock/unlock restoration, disable and shutdown.")
     }
 
@@ -86,6 +87,52 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
 
     static func privatePanel() -> OverlayPanel {
         OverlayPanel(screenFrame: CGRect(x: 0, y: 0, width: 100, height: 80))
+    }
+
+    static func checkMarkedTextPersistence(model: ApplicationModel) throws {
+        for ending in ["finish", "escape", "focus"] {
+            for accepted in ["", "Принято"] {
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let store = try SceneStore(directory: directory)
+                let empty = EditorScene(canvasSize: CGSize(width: 800, height: 500))
+                var panel: OverlayPanel?
+                let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
+                    let next = privatePanel(); panel = next; return [next]
+                }, scheduleAfter: { _, _ in })
+                routing.start(); routing.testPanel()
+                defer { routing.stop() }
+                let editor = SceneEditorWindowController(scene: empty, hasSavedScene: false, store: store)
+                editor.onSceneChange = { routing.sceneDidChange($0, store: store) }
+                let canvas = descendants(editor.window!.contentView!).compactMap { $0 as? SceneCanvasView }.first!
+                canvas.createCenteredText()
+                let field = descendants(canvas).compactMap { $0 as? NSTextView }.first!
+                let selection = NSRange(location: NSNotFound, length: 0)
+                if !accepted.isEmpty { field.insertText(accepted, replacementRange: selection) }
+                field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.65))
+                assert(field.hasMarkedText() && canvas.state.scene.elements[0].text == accepted)
+                switch ending {
+                case "finish": canvas.finishText()
+                case "escape": field.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+                default: assert(editor.window!.makeFirstResponder(canvas))
+                }
+                let saved = try store.load()
+                if accepted.isEmpty {
+                    assert(editor.scene == empty && saved == nil && !canvas.state.canUndo,
+                           "\(ending) must keep a marked-only first edit out of persistence/history")
+                    assert(panel?.contentView is CountdownView)
+                } else {
+                    assert(editor.scene.elements.count == 1 && editor.scene.elements[0].text == accepted)
+                    assert(saved == editor.scene && (panel?.contentView as? SceneDisplayView)?.scene == saved,
+                           "\(ending) preserves the accepted prefix in both store and consumer")
+                    canvas.undo(nil)
+                    assert(editor.scene == empty && !canvas.state.canUndo, "One Undo for accepted typing plus composition")
+                }
+                editor.close()
+            }
+        }
+        print("Marked text persistence checks passed: finish/Escape/focus discard marked-only first edits, preserve accepted prefixes, fallback and single Undo.")
     }
 
     static func checkTextPersistence(model: ApplicationModel) throws {
@@ -242,6 +289,17 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         discarded.insertText("Я", replacementRange: NSRange(location: NSNotFound, length: 0))
         discarded.deleteBackward(nil)
         discarded.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        for accepted in ["", "Принято"] {
+            let before = blocked.scene
+            canvas.createCenteredText()
+            let marked = descendants(canvas).compactMap { $0 as? NSTextView }.first!
+            let selection = NSRange(location: NSNotFound, length: 0)
+            if !accepted.isEmpty { marked.insertText(accepted, replacementRange: selection) }
+            marked.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
+            canvas.finishText()
+            if accepted.isEmpty { assert(blocked.scene == before) }
+            else { assert(blocked.scene.elements.count == before.elements.count + 1 && blocked.scene.elements.last?.text == accepted) }
+        }
         blocked.close()
         let preserved = try Data(contentsOf: document)
         assert(preserved == corrupt,

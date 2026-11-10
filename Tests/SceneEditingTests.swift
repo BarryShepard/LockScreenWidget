@@ -113,6 +113,65 @@ import AppKit
         check(model.selection == [first.id, second.id] && !model.canUndo, "Shift-click adds a layer without history")
     }
 
+    static func markedTextFinishing(_ store: SceneStore) {
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        for ending in ["finish", "escape", "focus", "mouseDown"] {
+            for accepted in ["", "Текст"] {
+                let empty = EditorScene(canvasSize: size)
+                let model = SceneEditingState(empty)
+                var commits = 0
+                model.onUpdate = { if case .committed = $0 { commits += 1 } }
+                let canvas = SceneCanvasView(state: model, store: store)
+                let window = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 844, height: 544)),
+                                      styleMask: .borderless, backing: .buffered, defer: false)
+                window.contentView = canvas
+                canvas.createCenteredText()
+                let field = descendants(canvas).compactMap { $0 as? NSTextView }.first!
+                let selection = NSRange(location: NSNotFound, length: 0)
+                if !accepted.isEmpty { field.insertText(accepted, replacementRange: selection) }
+                field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
+                check(field.hasMarkedText() && field.string == accepted + "ка" && model.scene.elements[0].text == accepted,
+                      "Native composition stays separate from accepted model text")
+                switch ending {
+                case "finish": canvas.finishText()
+                case "escape": field.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+                case "focus": check(window.makeFirstResponder(canvas), "Native focus transfer succeeds")
+                default:
+                    let event = NSEvent.mouseEvent(with: .leftMouseDown, location: CGPoint(x: 5, y: 5), modifierFlags: [],
+                                                  timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                  eventNumber: 1, clickCount: 1, pressure: 1)!
+                    canvas.mouseDown(with: event)
+                }
+                check(descendants(canvas).allSatisfy { !($0 is NSTextView) }, "\(ending) finishes native text editing")
+                if accepted.isEmpty {
+                    check(model.scene == empty && commits == 0 && !model.canUndo,
+                          "\(ending) discards marked-only insertion without committing a blank layer")
+                } else {
+                    check(model.scene.elements.count == 1 && model.scene.elements[0].text == accepted && commits == 1,
+                          "\(ending) preserves accepted prefix without finalizing the marked suffix")
+                    model.undo()
+                    check(model.scene == empty && !model.canUndo, "\(ending) creates just one typing Undo")
+                    model.redo()
+                    check(model.scene.elements[0].text == accepted, "Redo retains accepted text only")
+                }
+            }
+        }
+        var saved = item(50); saved.text = "Сохранено"
+        let existing = EditorScene(canvasSize: size, elements: [saved])
+        let model = SceneEditingState(existing)
+        model.select([saved.id])
+        let canvas = SceneCanvasView(state: model, store: store)
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 844, height: 544)),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas; canvas.editSelection()
+        let field = descendants(canvas).compactMap { $0 as? NSTextView }.first!
+        field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0),
+                            replacementRange: NSRange(location: NSNotFound, length: 0))
+        canvas.finishText()
+        check(model.scene == existing && !model.canUndo, "Finishing composition preserves existing accepted text without another Undo")
+        print("Marked text finishing checks passed: direct finish, Escape, focus loss and mouse-down; marked-only discard and accepted prefix with one Undo.")
+    }
+
     static func truncatedImports(_ directory: URL, _ store: SceneStore) throws {
         let width = 128, height = 64
         let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
@@ -251,6 +310,7 @@ import AppKit
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
         shiftGestures(store)
+        markedTextFinishing(store)
         try truncatedImports(directory, store)
         try imports(directory,store); try widths(store)
         print("SceneEditingTests passed: rotated selection, history, layer order, group movement, Shift-click and Shift-held drag, Escape during move/copy, image routing, private pasteboard and text widths")

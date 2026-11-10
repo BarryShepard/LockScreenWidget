@@ -233,7 +233,9 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         let restore = typed
         // Clear delegates first to avoid reentrant ending notifications during focus changes.
         field.delegate = nil; input = nil; initialText = nil; editingID = nil
-        if newText && field.string.isEmpty {
+        // Marked text belongs to the input method, not the accepted scene.
+        // Finishing a marked-only insertion must not commit its blank model layer.
+        if newText && state.scene.elements.first(where: { $0.id == id })?.text.isEmpty == true {
             var v = state.value; v.scene.elements.removeAll { $0.id == id }; v.selection = initial.selection
             state.preview(v)
         }
