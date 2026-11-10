@@ -17,32 +17,55 @@
 - `bash scripts/build.sh` and `bash scripts/build.sh --universal` passed. The latter produced the artifact above. `lipo -archs` reports both architectures; `codesign --verify --deep --strict` passed.
 - `build/TEotW.app/Contents/MacOS/TEotW --diagnose` passed: 58 events, 19 countdowns, 39 period cards, system bold font and next-event output. `--probe-space` was preserved without changes and was not rerun during this task.
 
-All automated image fixtures use temporary directories. Pasteboard tests use unique private boards; no test reads or writes the general clipboard. The integration implementation work did not open the interactive production application, write personal scene data or lock the Mac.
+All automated image fixtures use temporary directories. CLI pasteboard tests use unique private boards, not the general clipboard. The implementation test commands did not launch the interactive production app or lock the Mac. The separate visible UI checks below use an explicitly isolated scene directory.
 
 ## Native verification status
 
 The separate `SceneEditorSmoke.app` harness was reported to pass T creation, Cyrillic typing and newlines, Enter editing, Delete/Undo, PNG picker import/cancel, X/Y/font changes, clock guide toggle and quit/relaunch with text/photo/font size 48 persisted. That harness exercised the editor components before production integration. It does **not** prove AppDelegate startup, status-menu wiring, the production Edit menu, overlay routing or production termination handling.
 
-Production native smoke on the exact artifact above is pending the main controller's separate visible check. Compilation, direct responder calls and private-board tests are not marked as native end-to-end verification. The historical successful secure-lock countdown check in version 0.1.0 also does not verify the new scene renderer on a secure lock screen.
+Production native smoke was then performed on the exact artifact above with `--scene-directory /private/tmp/lockscreen-editor-smoke-nldritem/Scene`:
 
-## Isolated native acceptance checklist
+- The production app opened the personal editor and loaded the saved text/photo composition, including 48 pt text. Its accessibility tree exposed the production Edit menu.
+- A real mouse drag moved the photo from X=100 to X=197.548, preserving Y=500 and its 640×400 pt frame.
+- A real double-click opened the replacement picker. Selecting a second generated PNG changed visible pixels while preserving the same two layers, photo name, position and frame.
+- Command-Z visibly restored the original photo pixels. Command-Shift-Z re-applied replacement. This verifies native production command routing, not only direct state calls.
+- Enter opened native text editing. Backspace deleted the final character of the text; Command-Z restored that character inside the field without undoing another scene action. Escape finished text input. The shortened line-height label was visible.
+- The isolated production session was quit. A normal launch without the diagnostic directory then opened a clean, ordinary personal editor; test layers were not injected into the normal profile. The editor was left open without editing the personal scene.
 
-Use a disposable scene directory. Production launches without `--scene-directory` use `~/Library/Application Support/LockScreenWidget`; this argument is opt-in and must be an absolute path.
+Visible clipboard-image insertion, external file drag-and-drop, real display hot-plug, the panel test and protected-screen appearance remain pending. Compilation/direct responder tests do not replace those checks. The historical secure-lock countdown check in version 0.1.0 also does not verify the new scene renderer on a secure lock screen.
+
+## Чеклист для проверки приложения
+
+Для экспериментов можно использовать отдельную папку сцены. Обычный запуск без `--scene-directory` сохраняет данные в `~/Library/Application Support/LockScreenWidget`. Диагностический путь должен быть абсолютным.
 
 ```sh
 scene_directory="$(mktemp -d /private/tmp/TEotW-scene.XXXXXX)"
 open -n build/TEotW.app --args --scene-directory "$scene_directory"
 ```
 
-- [ ] The first window is the personal screen editor. Its visible Add menu, inspector and layer list work. Close/reopen through the status menu; open the legacy countdown editor through both available actions.
-- [ ] Press T, click and type Cyrillic text. Create a fixed-width block by dragging. Use Enter/double click to edit, Enter for a newline and Escape to finish. Change font/size/color and confirm the result.
-- [ ] Select, Shift-select and move layers. Test arrows, Delete, Undo/Redo, duplicate and each layer-order menu command.
-- [ ] While text is focused, verify Command-A and Undo act on text. While a numeric field is focused, edit/select/copy/paste its contents and commit with Enter. Click a structural toolbar action after changing a field; the field value must be applied first. Only use clipboard content explicitly chosen for this manual check.
-- [ ] Import a real image through the system file picker, then cancel another picker and confirm that nothing changes. Move or remove the original file and verify that the saved document still uses its local copy.
-- [ ] With exactly one photo selected, replace it from an explicitly chosen clipboard image. Check geometry and layer order, then Undo. Drop another real image onto a photo to replace it and onto empty canvas to add a layer. Check cancellation and errors without losing the existing image.
-- [ ] Quit normally and relaunch with the same private directory. Verify text, photo, geometry and font style. Delete every layer, quit/relaunch and confirm the saved scene stays empty.
-- [ ] Use the eight-second transparent panel test. Confirm scene content and absence of handles/guides; both visible editors hide and restore. Verify the enabled menu and quit cleanup.
-- [ ] On multiple displays, reorder displays and disconnect the launch target. The scene must not migrate to a different display; reconnect the original display and recheck. Automated identity matching is not a physical hot-plug test.
+Уже проверено в основной сборке:
+
+- [x] Открывается новый редактор; сохранённая тестовая композиция загружает текст, фото и кегль 48 pt.
+- [x] Перетаскивание двигает фото без изменения его размеров.
+- [x] Двойной клик открывает выбор замены; новый файл меняет содержимое, сохраняя рамку и число слоёв.
+- [x] Cmd+Z возвращает прежние пиксели изображения; Cmd+Shift+Z повторяет замену.
+- [x] Enter включает редактирование текста; Backspace и Cmd+Z внутри текста работают с символами; Escape завершает ввод.
+- [x] Запуск без тестового аргумента открывает обычный профиль без тестовых элементов.
+
+Отдельно в нативном тестовом окне компонентов проверены T с кликом, многострочный ввод на русском, удаление слоя/Undo, импорт через «Добавить», отмена выбора файла, координаты/кегль в панели, отдельный выключатель часов и восстановление после перезапуска. Это не помечается как повторная проверка каждого сценария в основной сборке.
+
+Для ручного прохода:
+
+- [ ] Через «Добавить» вставить свои текст и фото. После T проверить и клик, и протягивание рамки. Двойной клик по тексту должен включать ввод; Enter внутри него — добавлять строку.
+- [ ] Изменить шрифт, начертание, кегль, цвет и интервалы. В числовом поле выделение и команды ввода относятся к полю; Enter подтверждает значение. Убедиться, что незавершённый ввод не сбрасывается.
+- [ ] Выделить несколько слоёв рамкой с частичным пересечением и Shift-кликами. Проверить перемещение, Option-копию, стрелки, Delete, Undo/Redo и все команды порядка слоёв.
+- [ ] Импортировать фото, затем переместить исходный файл вне приложения: сцена должна пользоваться собственной копией. Отмена выбора файла и ошибка чтения сохраняют прежнее содержимое.
+- [ ] Скопировать выбранное для теста изображение во внешний буфер и нажать Cmd+V на выделенном фото: должна произойти замена без нового слоя; Undo возвращает прежнее фото. Без выделенного фото вставка создаёт слой.
+- [ ] Перетащить файл из Finder на фото — замена; на пустое место — новый слой. Проверить подсветку цели и сохранение рамки.
+- [ ] Завершить приложение и открыть снова: все элементы и стили восстановлены. Отдельно удалить все слои и проверить, что сохранённая пустая сцена не возвращает прежний отсчёт.
+- [ ] Закрыть и открыть редактор через строку меню; проверить оба способа открытия прежнего редактора отсчёта.
+- [ ] Запустить восьмисекундную прозрачную панель: видна сцена без рамок выделения и ориентиров; оба редактора скрываются и затем возвращаются. Проверить отключение показа и завершение приложения.
+- [ ] На нескольких дисплеях отключить выбранный при запуске экран: композиция не должна переехать на другой. Подключить его обратно и проверить восстановление. Модельный тест идентичности не заменяет физическую проверку.
 
 ## Separate secure-lock check
 
