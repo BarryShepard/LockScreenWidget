@@ -1,6 +1,15 @@
 # Native editor Stage A verification
 
-## Tested build
+## Final fixes — 10 November 2026
+
+- Current code: `9ac681b9a57028436d9526018d7a0f33a34f281a`, following the six-finding fix commit `17d1c78`.
+- Current universal executable SHA-256: `a2b94f840f0fcc0090bb8c863746ca4b4439b8c0dd5f6b67e4c846ebbe7b8886`. Build, signature, architectures and `--diagnose` passed.
+- All six suites passed after the main fix wave. After the narrow IME correction, SceneEditingTests and LockScreenControllerTests passed again. Native AppKit regressions cover marked-only insertion discard, accepted text preservation, fallback, persistence and one-step Undo across finish, Escape and focus loss; canvas mouse-down is also covered in SceneEditingTests.
+- Native production smoke on `17d1c78`, using an isolated temporary scene: typed Cyrillic text while the field remained active; verified debounced storage; deleted the text, pressed Escape and quit. The provisional scene file was absent after discard and termination. This smoke predates the narrow IME fix; actual input-method switching was not manually tested.
+- Additional image-integrity validation is PNG-specific. Other formats retain AppKit decoding checks. An existing AppKit constraint-constant warning remains in controller tests; its origin has not been isolated.
+- The manual gaps listed below remain pending. Earlier artifact hashes and visible checks below are historical evidence, not additional native checks of the final executable.
+
+## Earlier tested build
 
 - Date: 10 November 2026.
 - Source: `03e28062b0bd386b58809160337d84b4556407a9` (`codex/personal-lockscreen-editor`). Documentation-only commits after this revision do not change the executable.
