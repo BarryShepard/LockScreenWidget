@@ -1,9 +1,25 @@
 import AppKit
 
+enum SceneScreenIdentity {
+    static func identifier(for screen: NSScreen) -> String? {
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+              let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() else { return nil }
+        return CFUUIDCreateString(nil, uuid) as String
+    }
+
+    static func matchingIndex(target: String?, available: [String?]) -> Int? {
+        guard let target else { return nil }
+        return available.firstIndex { $0 == target }
+    }
+}
+
 final class LockScreenController: NSObject {
     private let model: ApplicationModel
     private let readLockState: () -> Bool?
-    private let makePanels: () -> [OverlayPanel]
+    private let makePanels: (() -> [OverlayPanel])?
+    private let targetScreenID: String?
+    private var scene: EditorScene?
+    private var sceneStore: SceneStore?
     private let scheduleAfter: (TimeInterval, @escaping () -> Void) -> Void
     private let distributed = DistributedNotificationCenter.default()
     private var panels: [OverlayPanel] = []
@@ -18,13 +34,15 @@ final class LockScreenController: NSObject {
     var onTestDidEnd: ((PanelTestCompletion) -> Void)?
 
     init(model: ApplicationModel, readLockState: @escaping () -> Bool? = readSessionLockState,
-         makePanels: @escaping () -> [OverlayPanel] = { NSScreen.screens.map { OverlayPanel(screen: $0) } },
+         makePanels: (() -> [OverlayPanel])? = nil,
+         targetScreenID: String? = NSScreen.main.flatMap(SceneScreenIdentity.identifier),
          scheduleAfter: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
              DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
          }) {
         self.model = model
         self.readLockState = readLockState
         self.makePanels = makePanels
+        self.targetScreenID = targetScreenID
         self.scheduleAfter = scheduleAfter
         super.init()
     }
@@ -72,6 +90,17 @@ final class LockScreenController: NSObject {
     }
 
     func settingsDidChange() { renderPanels() }
+
+    /// A committed empty scene is still scene content; nil alone means legacy fallback.
+    func sceneDidChange(_ scene: EditorScene, store: SceneStore) {
+        let wasLegacy = self.scene == nil
+        self.scene = scene
+        sceneStore = store
+        if wasLegacy {
+            clearPanels()
+            if observing { updatePanels(at: Date()) }
+        } else { renderPanels() }
+    }
 
     @objc func toggleEnabled() {
         model.isEnabled.toggle()
@@ -140,7 +169,7 @@ final class LockScreenController: NSObject {
     private func updatePanels(at now: Date) {
         logDiagnostic("panels: locked=\(locked) enabled=\(model.isEnabled)")
         guard (locked && model.isEnabled) || testingPanel else { clearPanels(); return }
-        if panels.isEmpty { panels = makePanels() }
+        if panels.isEmpty { panels = createPanels() }
         guard !panels.isEmpty else { return }
         if locked {
             if lockSpace == nil { lockSpace = LockScreenSpace() }
@@ -167,8 +196,33 @@ final class LockScreenController: NSObject {
 
     private func renderPanels() {
         for panel in panels {
-            (panel.contentView as? CountdownView)?.render(content: currentDisplay, settings: model.settings)
+            if let scene { (panel.contentView as? SceneDisplayView)?.scene = scene }
+            else { (panel.contentView as? CountdownView)?.render(content: currentDisplay, settings: model.settings) }
         }
+    }
+
+    private func createPanels() -> [OverlayPanel] {
+        let result: [OverlayPanel]
+        if let makePanels { result = makePanels() }
+        else if scene != nil {
+            let screens = NSScreen.screens
+            guard let index = SceneScreenIdentity.matchingIndex(target: targetScreenID,
+                                                               available: screens.map(SceneScreenIdentity.identifier)) else {
+                logDiagnostic("scene-screen: launch display unavailable; no replacement display selected")
+                return []
+            }
+            result = [OverlayPanel(screen: screens[index])]
+        } else { result = NSScreen.screens.map { OverlayPanel(screen: $0) } }
+        if let scene, let store = sceneStore {
+            for panel in result {
+                // The logical scene occupies the whole target display, unlike the
+                // legacy countdown's compact panel. No editor chrome is installed.
+                if let screen = panel.screen { panel.setFrame(screen.frame, display: false) }
+                panel.contentView = SceneDisplayView(scene: scene, store: store)
+                panel.contentView?.isHidden = true
+            }
+        }
+        return result
     }
 
     private func clearPanels() {
@@ -182,7 +236,8 @@ final class LockScreenController: NSObject {
 
     private func logPanelState() {
         for panel in panels {
-            logDiagnostic("panel: visible=\(panel.isVisible) activeSpace=\(panel.isOnActiveSpace) occlusion=\(panel.occlusionState.rawValue) level=\(panel.level.rawValue) contentSize=\(panel.contentView?.bounds.size ?? .zero) draws=\((panel.contentView as? CountdownView)?.drawCount ?? 0) loginVisible=\(panel.canBecomeVisibleWithoutLogin)")
+            let content = panel.contentView is SceneDisplayView ? "scene" : "countdown"
+            logDiagnostic("panel: visible=\(panel.isVisible) activeSpace=\(panel.isOnActiveSpace) occlusion=\(panel.occlusionState.rawValue) level=\(panel.level.rawValue) content=\(content) contentSize=\(panel.contentView?.bounds.size ?? .zero) draws=\((panel.contentView as? CountdownView)?.drawCount ?? 0) loginVisible=\(panel.canBecomeVisibleWithoutLogin)")
         }
     }
 }

@@ -18,6 +18,7 @@ for architecture in "${ARCHITECTURES[@]}"; do
     -target "$architecture-apple-macosx15.0" -framework AppKit -framework CoreText -framework CoreGraphics \
     "$PROJECT_DIR"/Sources/Models/*.swift "$PROJECT_DIR"/Sources/Views/*.swift \
     "$PROJECT_DIR"/Sources/Controllers/*.swift "$PROJECT_DIR"/Sources/Infrastructure/*.swift \
+    "$PROJECT_DIR"/Sources/Scene*.swift \
     "$PROJECT_DIR/Sources/AppDelegate.swift" "$PROJECT_DIR/Sources/main.swift" \
     -o "$binary"
   BINARIES+=("$binary")

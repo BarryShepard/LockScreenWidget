@@ -17,6 +17,7 @@ fi
 for suite in LayoutTests LockScreenControllerTests; do
   "$SWIFTC" "${COMMON[@]}" -framework AppKit -framework CoreText -framework CoreGraphics \
     "${MODELS[@]}" "$PROJECT_DIR"/Sources/Views/*.swift "$PROJECT_DIR"/Sources/Controllers/*.swift \
+    "$PROJECT_DIR"/Sources/Scene*.swift "$PROJECT_DIR/Sources/AppDelegate.swift" \
     "$PROJECT_DIR"/Sources/Infrastructure/*.swift "$PROJECT_DIR/Tests/MemoryPreferences.swift" \
     "$PROJECT_DIR/Tests/$suite.swift" -o "$PROJECT_DIR/build/$suite"
   "$PROJECT_DIR/build/$suite" "$PROJECT_DIR"
