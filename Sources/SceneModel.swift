@@ -25,7 +25,7 @@ struct SceneColor: Codable, Equatable {
     }
 }
 
-struct SceneTextStyle: Codable, Equatable {
+struct SceneTextStyleModel: Codable, Equatable {
     var family = "System"
     /// Indices from ultra light (0) through black (8).
     var weight = 3
@@ -54,7 +54,7 @@ struct SceneTextStyle: Codable, Equatable {
     }
 }
 
-struct SceneElement: Codable, Equatable, Identifiable {
+struct SceneElementModel: Codable, Equatable, Identifiable {
     var id: UUID
     var kind: SceneElementKind
     var name: String
@@ -65,14 +65,14 @@ struct SceneElement: Codable, Equatable, Identifiable {
     var text: String
     /// Absent in older documents, which retain their explicit frame width.
     var autoTextWidth: Bool? = nil
-    var style: SceneTextStyle
+    var style: SceneTextStyleModel
     var assetID: String?
     /// Image placement in element-local, top-left-origin logical points.
     var imageRect: CGRect?
 
     init(kind: SceneElementKind, frame: CGRect, id: UUID = UUID(), name: String? = nil,
          rotation: Double = 0, cornerRadius: Double = 0, opacity: Double = 1,
-         text: String? = nil, style: SceneTextStyle = SceneTextStyle(),
+         text: String? = nil, style: SceneTextStyleModel = SceneTextStyleModel(),
          assetID: String? = nil, imageRect: CGRect? = nil) {
         self.id = id
         self.kind = kind
@@ -88,19 +88,19 @@ struct SceneElement: Codable, Equatable, Identifiable {
     }
 }
 
-struct EditorScene: Codable, Equatable {
+struct EditorSceneModel: Codable, Equatable {
     static let currentVersion = 1
     var schemaVersion: Int
     var canvasSize: CGSize
-    var elements: [SceneElement]
+    var elements: [SceneElementModel]
 
-    init(canvasSize: CGSize, elements: [SceneElement] = []) {
+    init(canvasSize: CGSize, elements: [SceneElementModel] = []) {
         schemaVersion = Self.currentVersion
         self.canvasSize = canvasSize
         self.elements = elements
     }
 
-    func validated() throws -> EditorScene {
+    func validated() throws -> EditorSceneModel {
         guard schemaVersion == Self.currentVersion else {
             throw SceneError.invalid("Версия документа не поддерживается: \(schemaVersion).")
         }

@@ -2,7 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
-    private let state: SceneEditingState
+    private let state: SceneEditingStateModel
     private let store: SceneStore
     private let canvas: SceneCanvasView
     private let inspector: SceneInspectorView
@@ -14,17 +14,17 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     private var pendingSave: DispatchWorkItem?
     // Typing can save a provisional scene before the editing session commits.
     private var hasCommittedDocument: Bool
-    private var desiredDocument: EditorScene?
-    private var savedDocument: EditorScene?
-    var scene: EditorScene { state.scene }
-    var onSceneChange: ((EditorScene?) -> Void)?
+    private var desiredDocument: EditorSceneModel?
+    private var savedDocument: EditorSceneModel?
+    var scene: EditorSceneModel { state.scene }
+    var onSceneChange: ((EditorSceneModel?) -> Void)?
     var onRevealLegacy: (() -> Void)?
 
-    init(scene: EditorScene, hasSavedScene: Bool, store: SceneStore) {
+    init(scene: EditorSceneModel, hasSavedScene: Bool, store: SceneStore) {
         hasCommittedDocument = hasSavedScene
         savedDocument = hasSavedScene ? scene : nil
         desiredDocument = savedDocument
-        self.store = store; state = SceneEditingState(scene)
+        self.store = store; state = SceneEditingStateModel(scene)
         canvas = SceneCanvasView(state: state, store: store); inspector = SceneInspectorView(state: state)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 710),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -163,7 +163,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
             case .layers(let copied): state.insertCopies(copied)
             case .images(let images): try importImages(images, into: target)
             case .text(let string) where drop == nil:
-                var e = SceneElement(kind: .text, frame: CGRect(origin: state.insertionPoint,
+                var e = SceneElementModel(kind: .text, frame: CGRect(origin: state.insertionPoint,
                                      size: CGSize(width: max(60,scene.canvasSize.width*0.45),height: 1)), text: string)
                 SceneTextLayout.fit(&e)
                 state.change { $0.scene.elements.append(e); $0.selection = [e.id] }

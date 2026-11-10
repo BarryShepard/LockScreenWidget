@@ -11,7 +11,7 @@ private final class SceneLayerTable: NSTableView {
 }
 
 final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
-    let state: SceneEditingState
+    let state: SceneEditingStateModel
     var onFocus: (() -> Void)?
     var onError: ((String) -> Void)?
     private let table = SceneLayerTable(), properties = NSStackView()
@@ -24,7 +24,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
     private var textRows = [NSView]()
     private let missingFont = NSTextField(wrappingLabelWithString: "")
 
-    init(state: SceneEditingState) {
+    init(state: SceneEditingStateModel) {
         self.state = state
         super.init(frame: .zero)
         let scroll = NSScrollView(); scroll.drawsBackground = false; scroll.hasVerticalScroller = true

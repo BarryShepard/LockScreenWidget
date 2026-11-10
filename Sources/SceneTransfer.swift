@@ -17,9 +17,9 @@ struct SceneImageInput {
 
 enum SceneTransfer {
     static let layerType = NSPasteboard.PasteboardType("local.lockscreenwidget.scene-elements.v1")
-    enum Content { case layers([SceneElement]), images([SceneImageInput]), text(String) }
+    enum Content { case layers([SceneElementModel]), images([SceneImageInput]), text(String) }
 
-    static func write(_ elements: [SceneElement], to board: NSPasteboard) throws -> Bool {
+    static func write(_ elements: [SceneElementModel], to board: NSPasteboard) throws -> Bool {
         guard !elements.isEmpty else { return false }
         let data = try JSONEncoder().encode(elements)
         board.clearContents()
@@ -28,8 +28,8 @@ enum SceneTransfer {
 
     static func read(_ board: NSPasteboard, allowLayers: Bool = true) throws -> Content? {
         if allowLayers, let data = board.data(forType: layerType) {
-            let elements = try JSONDecoder().decode([SceneElement].self, from: data)
-            _ = try EditorScene(canvasSize: CGSize(width: 1, height: 1), elements: elements).validated()
+            let elements = try JSONDecoder().decode([SceneElementModel].self, from: data)
+            _ = try EditorSceneModel(canvasSize: CGSize(width: 1, height: 1), elements: elements).validated()
             return .layers(elements)
         }
         if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
@@ -47,7 +47,7 @@ enum SceneTransfer {
     }
 }
 
-extension SceneEditingState {
+extension SceneEditingStateModel {
     var insertionPoint: CGPoint { CGPoint(x: scene.canvasSize.width/2, y: scene.canvasSize.height/2) }
     var pasteImageDestination: SceneImageDestination {
         if selected.count == 1, let image = selected.first, image.kind == .image { return .replace(image.id) }
@@ -83,7 +83,7 @@ extension SceneEditingState {
                     let scale = min(1, canvas.width*0.65/size.width, canvas.height*0.65/size.height)
                     let w = size.width*scale, h = size.height*scale, offset = CGFloat(i)*16
                     let frame = CGRect(x: point.x-w/2+offset, y: point.y-h/2+offset, width: w, height: h)
-                    let e = SceneElement(kind: .image, frame: frame, name: inputs[i].name, assetID: assets[i].assetID,
+                    let e = SceneElementModel(kind: .image, frame: frame, name: inputs[i].name, assetID: assets[i].assetID,
                                          imageRect: CGRect(origin: .zero, size: frame.size))
                     v.scene.elements.append(e); v.selection.insert(e.id)
                 }

@@ -1,7 +1,7 @@
 import AppKit
 
 enum SceneGeometry {
-    static func corners(_ e: SceneElement) -> [CGPoint] {
+    static func corners(_ e: SceneElementModel) -> [CGPoint] {
         let f = e.frame, a = CGFloat(e.rotation * .pi / 180), c = cos(a), s = sin(a)
         return [CGPoint(x: f.minX, y: f.minY), CGPoint(x: f.maxX, y: f.minY),
                 CGPoint(x: f.maxX, y: f.maxY), CGPoint(x: f.minX, y: f.maxY)].map {
@@ -9,13 +9,13 @@ enum SceneGeometry {
             return CGPoint(x: f.midX + x*c - y*s, y: f.midY + x*s + y*c)
         }
     }
-    static func bounds(_ elements: [SceneElement]) -> CGRect? {
+    static func bounds(_ elements: [SceneElementModel]) -> CGRect? {
         let p = elements.flatMap(corners)
         guard let x = p.map(\.x).min(), let y = p.map(\.y).min() else { return nil }
         return CGRect(x: x, y: y, width: p.map(\.x).max()! - x, height: p.map(\.y).max()! - y)
     }
     /// Separating-axis test; the bounding box alone selects empty rotated corners.
-    static func intersects(_ e: SceneElement, _ r: CGRect) -> Bool {
+    static func intersects(_ e: SceneElementModel, _ r: CGRect) -> Bool {
         let p = corners(e), a = CGFloat(e.rotation * .pi / 180)
         let q = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
                  CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
@@ -31,20 +31,20 @@ enum SceneGeometry {
 enum SceneLayerOrder { case forward, backward, front, back }
 enum SceneUpdate { case selection, preview, typing, committed }
 struct SceneSnapshot: Equatable {
-    var scene: EditorScene
+    var scene: EditorSceneModel
     var selection: Set<UUID>
 }
 
-final class SceneEditingState {
+final class SceneEditingStateModel {
     private(set) var value: SceneSnapshot
     private var past = [SceneSnapshot](), future = [SceneSnapshot]()
     var onUpdate: ((SceneUpdate) -> Void)?
-    var scene: EditorScene { value.scene }
+    var scene: EditorSceneModel { value.scene }
     var selection: Set<UUID> { value.selection }
-    var selected: [SceneElement] { scene.elements.filter { selection.contains($0.id) } }
+    var selected: [SceneElementModel] { scene.elements.filter { selection.contains($0.id) } }
     var canUndo: Bool { !past.isEmpty }
     var canRedo: Bool { !future.isEmpty }
-    init(_ scene: EditorScene) { value = SceneSnapshot(scene: scene, selection: []) }
+    init(_ scene: EditorSceneModel) { value = SceneSnapshot(scene: scene, selection: []) }
 
     func select(_ ids: Set<UUID>) {
         let valid = ids.intersection(scene.elements.map(\.id))
@@ -52,7 +52,7 @@ final class SceneEditingState {
         value.selection = valid
         onUpdate?(.selection)
     }
-    func hit(_ point: CGPoint) -> SceneElement? {
+    func hit(_ point: CGPoint) -> SceneElementModel? {
         scene.elements.last { SceneGeometry.intersects($0, CGRect(origin: point, size: .zero)) }
     }
     func marquee(_ rect: CGRect) -> Set<UUID> {
@@ -84,7 +84,7 @@ final class SceneEditingState {
         guard let next = future.popLast() else { return }
         past.append(value); value = next; onUpdate?(.committed)
     }
-    func editSelected(_ edit: (inout SceneElement) -> Void) {
+    func editSelected(_ edit: (inout SceneElementModel) -> Void) {
         change { v in
             for i in v.scene.elements.indices where v.selection.contains(v.scene.elements[i].id) { edit(&v.scene.elements[i]) }
         }
@@ -99,9 +99,9 @@ final class SceneEditingState {
         }
         return v
     }
-    static func inserting(_ items: [SceneElement], into start: SceneSnapshot, offset: CGFloat) -> SceneSnapshot {
+    static func inserting(_ items: [SceneElementModel], into start: SceneSnapshot, offset: CGFloat) -> SceneSnapshot {
         var v = start
-        let copies = items.map { item -> SceneElement in
+        let copies = items.map { item -> SceneElementModel in
             var e = item
             e.id = UUID(); e.frame = item.frame.offsetBy(dx: offset, dy: offset)
             return e
@@ -115,7 +115,7 @@ final class SceneEditingState {
         move(dx: horizontal ? scene.canvasSize.width/2 - box.midX : 0,
              dy: horizontal ? 0 : scene.canvasSize.height/2 - box.midY)
     }
-    func insertCopies(_ items: [SceneElement]) {
+    func insertCopies(_ items: [SceneElementModel]) {
         guard !items.isEmpty else { return }
         change { $0 = Self.inserting(items, into: $0, offset: 12) }
     }

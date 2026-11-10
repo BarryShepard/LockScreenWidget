@@ -16,7 +16,7 @@ struct SceneViewport {
 }
 
 enum SceneTextLayout {
-    static func attributes(_ style: SceneTextStyle, scale: CGFloat = 1) -> [NSAttributedString.Key: Any] {
+    static func attributes(_ style: SceneTextStyleModel, scale: CGFloat = 1) -> [NSAttributedString.Key: Any] {
         let p = NSMutableParagraphStyle()
         p.alignment = [NSTextAlignment.left, .center, .right][style.horizontalAlignment]
         p.lineBreakMode = .byWordWrapping
@@ -24,7 +24,7 @@ enum SceneTextLayout {
         return [.font: style.font(scale: scale), .foregroundColor: style.color.nsColor, .paragraphStyle: p,
                 .kern: style.letterSpacing/100 * style.fontSize * scale]
     }
-    static func measure(_ e: SceneElement, width: CGFloat) -> CGSize {
+    static func measure(_ e: SceneElementModel, width: CGFloat) -> CGSize {
         // A trailing newline owns a real empty line while the insertion point is there.
         let content = (e.text.isEmpty || e.text.hasSuffix("\n")) ? e.text + "\u{200B}" : e.text
         let s = NSAttributedString(string: content, attributes: attributes(e.style))
@@ -32,12 +32,12 @@ enum SceneTextLayout {
                                options: [.usesLineFragmentOrigin, .usesFontLeading])
         return CGSize(width: ceil(r.width), height: ceil(r.height))
     }
-    static func fit(_ e: inout SceneElement, minimumHeight: CGFloat = 1) {
+    static func fit(_ e: inout SceneElementModel, minimumHeight: CGFloat = 1) {
         let auto = e.autoTextWidth == true
         if auto { e.frame.size.width = max(28, measure(e, width: .greatestFiniteMagnitude).width + 2) }
         e.frame.size.height = max(minimumHeight, measure(e, width: e.frame.width).height)
     }
-    static func yOffset(_ e: SceneElement) -> CGFloat {
+    static func yOffset(_ e: SceneElementModel) -> CGFloat {
         let free = max(0, e.frame.height - measure(e, width: e.frame.width).height)
         return [0, free/2, free][e.style.verticalAlignment]
     }
@@ -55,7 +55,7 @@ final class SceneRenderer {
         cache.setObject(image, forKey: id as NSString, cost: Int(max(1, cost)))
         return image
     }
-    func draw(_ scene: EditorScene, in viewport: SceneViewport, excluding: UUID? = nil) {
+    func draw(_ scene: EditorSceneModel, in viewport: SceneViewport, excluding: UUID? = nil) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.saveGState(); defer { ctx.restoreGState() }
         ctx.clip(to: viewport.rect)
@@ -91,9 +91,9 @@ final class SceneRenderer {
 }
 
 class SceneDisplayView: NSView {
-    var scene: EditorScene { didSet { if scene != oldValue { needsDisplay = true } } }
+    var scene: EditorSceneModel { didSet { if scene != oldValue { needsDisplay = true } } }
     private let renderer: SceneRenderer
-    init(scene: EditorScene, store: SceneStore) {
+    init(scene: EditorSceneModel, store: SceneStore) {
         self.scene = scene; renderer = SceneRenderer(store: store)
         super.init(frame: .zero)
     }

@@ -8,7 +8,7 @@ private final class SceneInputView: NSTextView {
     @objc func redo(_ sender: Any?) { localHistory.redo() }
 }
 final class SceneCanvasView: NSView, NSTextViewDelegate {
-    let state: SceneEditingState
+    let state: SceneEditingStateModel
     let renderer: SceneRenderer
     var onPickReplacement: ((UUID) -> Void)?
     var onPaste: ((NSPasteboard, SceneImageDestination?) -> Bool)?
@@ -34,7 +34,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
-    init(state: SceneEditingState, store: SceneStore) {
+    init(state: SceneEditingStateModel, store: SceneStore) {
         self.state = state; renderer = SceneRenderer(store: store)
         super.init(frame: .zero)
         setAccessibilityElement(true); setAccessibilityRole(.group); setAccessibilityLabel("Холст")
@@ -64,7 +64,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         NSBezierPath(rect: v.rect).addClip()
         if guides { drawGuides(in: v.rect) }
         renderer.draw(state.scene, in: v, excluding: editingID)
-        func outline(_ e: SceneElement, color: NSColor) {
+        func outline(_ e: SceneElementModel, color: NSColor) {
             let points = SceneGeometry.corners(e).map(v.viewPoint)
             let path = NSBezierPath(); path.move(to: points[0])
             points.dropFirst().forEach { path.line(to: $0) }
@@ -138,11 +138,11 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         if let downID = downID {
             guard state.selection.contains(downID) || moveBase != nil else { return }
             if moveBase == nil {
-                moveBase = optionDown ? SceneEditingState.inserting(state.selected, into: state.value, offset: 0) : state.value
+                moveBase = optionDown ? SceneEditingStateModel.inserting(state.selected, into: state.value, offset: 0) : state.value
             }
             if axisX == nil { axisX = abs(dx) >= abs(dy) }
             if event.modifierFlags.contains(.shift) { if axisX == true { dy = 0 } else { dx = 0 } }
-            if let base = moveBase { state.preview(SceneEditingState.moved(base, dx: dx, dy: dy)) }
+            if let base = moveBase { state.preview(SceneEditingStateModel.moved(base, dx: dx, dy: dy)) }
         } else {
             let ids = state.marquee(dragRect)
             state.select(shiftDown ? original.selection.union(ids) : ids)
@@ -176,13 +176,13 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     private func beginNewText(at p: CGPoint, width: CGFloat?) {
         textTool = false
         let initial = state.value
-        var e = SceneElement(kind: .text, frame: CGRect(x: p.x, y: p.y, width: width ?? 48, height: 40), text: "")
+        var e = SceneElementModel(kind: .text, frame: CGRect(x: p.x, y: p.y, width: width ?? 48, height: 40), text: "")
         e.autoTextWidth = width == nil
         SceneTextLayout.fit(&e)
         var v = initial; v.scene.elements.append(e); v.selection = [e.id]
         state.preview(v); beginEditing(e, initial: initial, isNew: true)
     }
-    private func beginEditing(_ e: SceneElement, initial: SceneSnapshot, isNew: Bool, click: CGPoint? = nil) {
+    private func beginEditing(_ e: SceneElementModel, initial: SceneSnapshot, isNew: Bool, click: CGPoint? = nil) {
         initialText = initial; editingID = e.id; newText = isNew; typed = false; minimumHeight = isNew ? 1 : e.frame.height
         let field = SceneInputView(frame: .zero)
         field.isRichText = false; field.importsGraphics = false; field.allowsUndo = true

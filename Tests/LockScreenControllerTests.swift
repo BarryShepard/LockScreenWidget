@@ -95,7 +95,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
                 let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                 defer { try? FileManager.default.removeItem(at: directory) }
                 let store = try SceneStore(directory: directory)
-                let empty = EditorScene(canvasSize: CGSize(width: 800, height: 500))
+                let empty = EditorSceneModel(canvasSize: CGSize(width: 800, height: 500))
                 var panel: OverlayPanel?
                 let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
                     let next = privatePanel(); panel = next; return [next]
@@ -139,7 +139,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)
-        let empty = EditorScene(canvasSize: CGSize(width: 800, height: 500))
+        let empty = EditorSceneModel(canvasSize: CGSize(width: 800, height: 500))
         var panel: OverlayPanel?
         let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
             let next = privatePanel()
@@ -162,7 +162,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         }
         func escape(_ field: NSTextView) { field.doCommand(by: #selector(NSResponder.cancelOperation(_:))) }
         func awaitDebounce() { RunLoop.main.run(until: Date().addingTimeInterval(0.65)) }
-        func checkConsumer(_ expected: EditorScene?) throws {
+        func checkConsumer(_ expected: EditorSceneModel?) throws {
             let loaded = try store.load()
             assert(loaded == expected, "Persisted scene must agree with the active editor")
             if let expected {
@@ -373,7 +373,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
                "AppKit display requests must survive countdown refresh")
         let beforeEdit = display.invalidations
         var changed = startup.scene
-        changed.elements = [SceneElement(kind: .text, frame: CGRect(x: 5, y: 5, width: 90, height: 30), text: "Live scene")]
+        changed.elements = [SceneElementModel(kind: .text, frame: CGRect(x: 5, y: 5, width: 90, height: 30), text: "Live scene")]
         routing.sceneDidChange(changed, store: startup.store)
         assert(created.count == 2 && display.scene == changed && display.invalidations > beforeEdit)
         routing.sceneDidChange(startup.scene, store: startup.store)

@@ -3,7 +3,7 @@ import AppKit
 /// Loading never repairs a damaged document implicitly. The temporary store is only
 /// a dependency for an in-memory editor when the real directory cannot be opened.
 struct SceneStartup {
-    let scene: EditorScene
+    let scene: EditorSceneModel
     let store: SceneStore
     let hasSavedScene: Bool
     let persistenceError: String?
@@ -24,16 +24,16 @@ struct SceneStartup {
         do { store = try SceneStore(directory: directory()) }
         catch {
             let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("TEotW-in-memory-\(UUID().uuidString)", isDirectory: true)
-            return SceneStartup(scene: EditorScene(canvasSize: canvasSize), store: try SceneStore(directory: temporary),
+            return SceneStartup(scene: EditorSceneModel(canvasSize: canvasSize), store: try SceneStore(directory: temporary),
                                 hasSavedScene: false, persistenceError: error.localizedDescription,
                                 temporaryDirectory: temporary)
         }
         do {
             let saved = try store.load()
-            return SceneStartup(scene: saved ?? EditorScene(canvasSize: canvasSize), store: store,
+            return SceneStartup(scene: saved ?? EditorSceneModel(canvasSize: canvasSize), store: store,
                                 hasSavedScene: saved != nil, persistenceError: nil, temporaryDirectory: nil)
         } catch {
-            return SceneStartup(scene: EditorScene(canvasSize: canvasSize), store: store,
+            return SceneStartup(scene: EditorSceneModel(canvasSize: canvasSize), store: store,
                                 hasSavedScene: false, persistenceError: error.localizedDescription, temporaryDirectory: nil)
         }
     }

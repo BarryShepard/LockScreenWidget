@@ -3,13 +3,13 @@ import AppKit
 @main struct SceneEditingTests {
     static func check(_ ok: Bool, _ message: String) { precondition(ok, message) }
     static let size = CGSize(width: 800,height: 500)
-    static func item(_ x: CGFloat) -> SceneElement {
-        SceneElement(kind: .text, frame: CGRect(x: x,y: 100,width: 100,height: 20))
+    static func item(_ x: CGFloat) -> SceneElementModel {
+        SceneElementModel(kind: .text, frame: CGRect(x: x,y: 100,width: 100,height: 20))
     }
     static func geometryAndHistory() {
         var a = item(100); a.rotation = 45
         let b = item(300), c = item(500), d = item(650)
-        let model = SceneEditingState(EditorScene(canvasSize: size,elements: [a,b,c,d]))
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size,elements: [a,b,c,d]))
         check(model.marquee(CGRect(x: 110,y: 70,width: 10,height: 10)) == [a.id], "Partially intersect rotated edge")
         check(model.marquee(CGRect(x: 109,y: 140,width: 4,height: 4)).isEmpty, "Rotated bounding box has empty corners")
         check(model.marquee(CGRect(x: 398,y: 117,width: 15,height: 8)) == [b.id], "Partial unrotated marquee")
@@ -21,9 +21,9 @@ import AppKit
         check(model.scene.elements.map(\.id) == [b.id,d.id,a.id,c.id], "Stable front order")
         model.reorder(.back); check(model.scene.elements.map(\.id) == [a.id,c.id,b.id,d.id], "Stable back order")
         let before = model.value
-        let duplicated = SceneEditingState.inserting(model.selected, into: before, offset: 0)
-        model.preview(SceneEditingState.moved(duplicated, dx: 5, dy: -10))
-        model.preview(SceneEditingState.moved(duplicated, dx: 20, dy: -30)); model.finish(from: before)
+        let duplicated = SceneEditingStateModel.inserting(model.selected, into: before, offset: 0)
+        model.preview(SceneEditingStateModel.moved(duplicated, dx: 5, dy: -10))
+        model.preview(SceneEditingStateModel.moved(duplicated, dx: 20, dy: -30)); model.finish(from: before)
         check(Array(model.scene.elements.prefix(4)) == before.scene.elements && model.selected.count == 2, "Option drag keeps originals")
         check(model.selection.isDisjoint(with: before.selection) && model.selected[0].frame == a.frame.offsetBy(dx: 20,dy: -30), "Only copies move")
         model.undo(); check(model.value == before, "One undo for entire duplicate drag")
@@ -38,7 +38,7 @@ import AppKit
     static func cancelCanvasDrag(_ store: SceneStore, duplicate: Bool) {
         _ = NSApplication.shared
         let first = item(50), second = item(300)
-        let model = SceneEditingState(EditorScene(canvasSize: size, elements: [first, second]))
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [first, second]))
         model.select(duplicate ? [first.id, second.id] : [first.id])
         let beforeLastEdit = model.value
         model.editSelected { $0.name = "Сохранённый слой" }
@@ -81,7 +81,7 @@ import AppKit
 
     static func shiftGestures(_ store: SceneStore) {
         let first = item(50), second = item(300)
-        let model = SceneEditingState(EditorScene(canvasSize: size, elements: [first, second]))
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [first, second]))
         let canvas = SceneCanvasView(state: model, store: store)
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544),
                               styleMask: .borderless, backing: .buffered, defer: false)
@@ -99,7 +99,7 @@ import AppKit
             canvas.mouseDragged(with: mouse(.leftMouseDragged, dx: 12, dy: 7))
             canvas.mouseDragged(with: mouse(.leftMouseDragged, dx: 24, dy: 40))
             canvas.mouseUp(with: mouse(.leftMouseUp, dx: 24, dy: 40))
-            check(model.value == SceneEditingState.moved(original, dx: 24, dy: 0),
+            check(model.value == SceneEditingStateModel.moved(original, dx: 24, dy: 0),
                   "Shift held before dragging moves the whole selection on its initial axis")
             model.undo()
             check(model.value == original && !model.canUndo, "One Undo for a Shift-constrained drag")
@@ -117,8 +117,8 @@ import AppKit
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         for ending in ["finish", "escape", "focus", "mouseDown"] {
             for accepted in ["", "Текст"] {
-                let empty = EditorScene(canvasSize: size)
-                let model = SceneEditingState(empty)
+                let empty = EditorSceneModel(canvasSize: size)
+                let model = SceneEditingStateModel(empty)
                 var commits = 0
                 model.onUpdate = { if case .committed = $0 { commits += 1 } }
                 let canvas = SceneCanvasView(state: model, store: store)
@@ -157,8 +157,8 @@ import AppKit
             }
         }
         var saved = item(50); saved.text = "Сохранено"
-        let existing = EditorScene(canvasSize: size, elements: [saved])
-        let model = SceneEditingState(existing)
+        let existing = EditorSceneModel(canvasSize: size, elements: [saved])
+        let model = SceneEditingStateModel(existing)
         model.select([saved.id])
         let canvas = SceneCanvasView(state: model, store: store)
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 844, height: 544)),
@@ -192,7 +192,7 @@ import AppKit
         let truncated = complete.prefix(256)
         check(complete.count > 256 && NSImage(data: truncated)?.size == CGSize(width: width, height: height),
               "Recognizable PNG prefix retains the original dimensions")
-        let model = SceneEditingState(EditorScene(canvasSize: size))
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size))
         let empty = model.value
         let good = SceneImageInput(data: complete), bad = SceneImageInput(data: truncated)
         try model.importImages([good], at: .add(model.insertionPoint), store: store)
@@ -250,7 +250,7 @@ import AppKit
         board.clearContents(); check(board.writeObjects([file as NSURL]), "Private board accepts URL")
         let fileInputs = try images()
         check(fileInputs.count == 1 && fileInputs[0].data == png, "Original local file URL copied")
-        let model = SceneEditingState(EditorScene(canvasSize: size))
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size))
         try model.importImages(fileInputs, at: .add(CGPoint(x: 200,y: 200)), store: store)
         var original = model.selected[0]
         model.editSelected { $0.rotation = 28; $0.cornerRadius = 5; $0.opacity = 0.4 }
@@ -294,13 +294,13 @@ import AppKit
         var e = item(20); e.text = "Надпись"; e.autoTextWidth = true
         SceneTextLayout.fit(&e); let initialWidth = e.frame.width
         e.text += " на экране"; SceneTextLayout.fit(&e); check(e.frame.width > initialWidth, "Automatic width follows typing")
-        try store.save(EditorScene(canvasSize: size, elements: [e]))
+        try store.save(EditorSceneModel(canvasSize: size, elements: [e]))
         check(try store.load()?.elements.first?.autoTextWidth == true, "Automatic mode survives restart")
         e.autoTextWidth = nil; e.frame.size.width = 60; SceneTextLayout.fit(&e)
         check(e.frame.width == 60 && e.frame.height > e.style.fontSize, "Fixed-width text wraps without growing sideways")
         let bytes = try JSONEncoder().encode(e)
         check(!String(decoding: bytes,as: UTF8.self).contains("autoTextWidth"), "Older payload has no width mode")
-        check(try JSONDecoder().decode(SceneElement.self, from: bytes).autoTextWidth == nil, "Older payload decodes as fixed")
+        check(try JSONDecoder().decode(SceneElementModel.self, from: bytes).autoTextWidth == nil, "Older payload decodes as fixed")
     }
     static func main() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

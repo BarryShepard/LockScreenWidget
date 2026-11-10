@@ -18,7 +18,7 @@ final class LockScreenController: NSObject {
     private let readLockState: () -> Bool?
     private let makePanels: (() -> [OverlayPanel])?
     private let targetScreenID: String?
-    private var scene: EditorScene?
+    private var scene: EditorSceneModel?
     private var sceneStore: SceneStore?
     private let scheduleAfter: (TimeInterval, @escaping () -> Void) -> Void
     private let distributed = DistributedNotificationCenter.default()
@@ -92,7 +92,7 @@ final class LockScreenController: NSObject {
     func settingsDidChange() { renderCountdownPanels() }
 
     /// A committed empty scene is still scene content; nil alone means legacy fallback.
-    func sceneDidChange(_ scene: EditorScene?, store: SceneStore) {
+    func sceneDidChange(_ scene: EditorSceneModel?, store: SceneStore) {
         guard self.scene != scene else { return }
         let routeChanged = (self.scene == nil) != (scene == nil)
         self.scene = scene
