@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import zlib
 
 final class SceneStore {
     private let documentURL: URL
@@ -75,6 +76,17 @@ final class SceneStore {
         }
     }
 
+    /// Remove only the first, provisional typing save that this editor made.
+    func discardProvisionalDocument(matching expected: EditorScene) throws {
+        guard let current = try load() else { return }
+        guard current == expected else {
+            throw SceneError.invalid("Документ изменился. Отмена ввода не удалила сохранённый файл.")
+        }
+        guard unlink(documentURL.path) == 0 || errno == ENOENT else {
+            throw SceneError.storage("Не удалось удалить временно сохранённый документ.", POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
+        }
+    }
+
     func importImage(at url: URL) throws -> String {
         let data: Data
         do {
@@ -86,14 +98,58 @@ final class SceneStore {
     }
 
     func importImage(data: Data) throws -> String {
-        guard let image = NSImage(data: data), image.isValid,
+        try importImages(data: [data])[0].assetID
+    }
+
+    func importImages(data: [Data]) throws -> [(assetID: String, size: CGSize)] {
+        // Validate the entire batch before allocating its first asset.
+        let sizes = try data.map(Self.imageSize)
+        let directory = try assetsDirectoryDescriptor()
+        defer { close(directory) }
+        var assets: [(assetID: String, size: CGSize)] = []
+        do {
+            for (bytes, size) in zip(data, sizes) {
+                assets.append((try writeAsset(bytes, in: directory), size))
+            }
+        } catch {
+            for asset in assets { unlinkat(directory, asset.assetID, 0) }
+            throw error
+        }
+        return assets
+    }
+
+    private static func imageSize(_ data: Data) throws -> CGSize {
+        let pngSignature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+        guard (!data.starts(with: pngSignature) || hasCompletePNGChunks(data)),
+              let image = NSImage(data: data), image.isValid,
               image.size.width.isFinite, image.size.height.isFinite,
               image.size.width > 0, image.size.height > 0 else {
             throw SceneError.invalid("Не удалось открыть изображение: файл повреждён или его формат не поддерживается.")
         }
+        return image.size
+    }
+
+    // AppKit recovers a partial IDAT as a valid bitmap. Walk the length-delimited
+    // chunks through IEND and check each CRC before letting AppKit use the image.
+    private static func hasCompletePNGChunks(_ data: Data) -> Bool {
+        data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            var offset = 8 // PNG signature
+            while bytes.count - offset >= 12 {
+                let length = Int(UInt32(bigEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self)))
+                guard length <= bytes.count - offset - 12 else { return false }
+                let type = UInt32(bigEndian: bytes.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self))
+                let checksum = UInt32(bigEndian: bytes.loadUnaligned(fromByteOffset: offset + 8 + length, as: UInt32.self))
+                let chunk = bytes.baseAddress!.advanced(by: offset + 4).assumingMemoryBound(to: UInt8.self)
+                guard length <= Int(Int32.max), crc32(0, chunk, UInt32(4 + length)) == checksum else { return false }
+                if type == 0x49454E44 { return length == 0 } // IEND
+                offset += 12 + length
+            }
+            return false
+        }
+    }
+
+    private func writeAsset(_ data: Data, in directory: Int32) throws -> String {
         let assetID = UUID().uuidString
-        let directory = try assetsDirectoryDescriptor()
-        defer { close(directory) }
         let descriptor = openat(directory, assetID, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
                                 S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else {

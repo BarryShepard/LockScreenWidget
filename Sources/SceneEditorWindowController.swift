@@ -12,12 +12,18 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     private let clock = NSButton(checkboxWithTitle: "Часы", target: nil, action: nil)
     private var blocked: String?
     private var pendingSave: DispatchWorkItem?
-    private var dirty = false
+    // Typing can save a provisional scene before the editing session commits.
+    private var hasCommittedDocument: Bool
+    private var desiredDocument: EditorScene?
+    private var savedDocument: EditorScene?
     var scene: EditorScene { state.scene }
-    var onSceneChange: ((EditorScene) -> Void)?
+    var onSceneChange: ((EditorScene?) -> Void)?
     var onRevealLegacy: (() -> Void)?
 
-    init(scene: EditorScene, store: SceneStore) {
+    init(scene: EditorScene, hasSavedScene: Bool, store: SceneStore) {
+        hasCommittedDocument = hasSavedScene
+        savedDocument = hasSavedScene ? scene : nil
+        desiredDocument = savedDocument
         self.store = store; state = SceneEditingState(scene)
         canvas = SceneCanvasView(state: state, store: store); inspector = SceneInspectorView(state: state)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 710),
@@ -29,7 +35,11 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         state.onUpdate = { [weak self] in self?.update($0) }
         canvas.onPickReplacement = { [weak self] id in self?.pick(.replace(id)) }
         canvas.onPaste = { [weak self] board, target in self?.paste(board, drop: target) ?? false }
-        canvas.onRestoreTypedScene = { [weak self] in self?.commit() }
+        canvas.onRestoreTypedScene = { [weak self] in
+            guard let self else { return }
+            self.desiredDocument = self.hasCommittedDocument ? self.scene : nil
+            self.saveIfNeeded()
+        }
         inspector.onFocus = { [weak self] in self?.canvas.focus() }
         inspector.onError = { [weak self] in self?.showError($0) }
         canvas.onError = inspector.onError
@@ -99,20 +109,31 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         switch kind {
         case .selection, .preview: break
         case .typing:
-            dirty = true; pendingSave?.cancel()
+            desiredDocument = scene; pendingSave?.cancel()
             guard blocked == nil else { return }
             let work = DispatchWorkItem { [weak self] in self?.saveIfNeeded() }
             pendingSave = work; DispatchQueue.main.asyncAfter(deadline: .now()+0.45, execute: work)
-        case .committed: commit()
+        case .committed:
+            hasCommittedDocument = true
+            desiredDocument = scene
+            saveIfNeeded()
         }
     }
-    private func commit() { dirty = true; onSceneChange?(scene); saveIfNeeded() }
     private func saveIfNeeded() {
         pendingSave?.cancel(); pendingSave = nil
-        guard blocked == nil, dirty else { return }
+        guard blocked == nil else {
+            // Recovery still supports editing and panel previews in memory.
+            onSceneChange?(desiredDocument)
+            return
+        }
+        guard desiredDocument != savedDocument else { return }
         do {
-            try store.save(scene); dirty = false
-            status.stringValue = "Сохранено на этом Mac"; status.textColor = .secondaryLabelColor; status.toolTip = nil
+            if let desiredDocument { try store.save(desiredDocument) }
+            else if let savedDocument { try store.discardProvisionalDocument(matching: savedDocument) }
+            savedDocument = desiredDocument
+            onSceneChange?(savedDocument)
+            status.stringValue = savedDocument == nil ? "Локальная композиция" : "Сохранено на этом Mac"
+            status.textColor = .secondaryLabelColor; status.toolTip = nil
         } catch { showError(error.localizedDescription) }
     }
     private func showError(_ message: String) {

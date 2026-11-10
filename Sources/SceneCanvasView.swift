@@ -125,8 +125,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         dragging = false; axisX = nil; downID = hit?.id
         shiftDown = event.modifierFlags.contains(.shift); optionDown = event.modifierFlags.contains(.option)
         if let id = downID {
-            if shiftDown { state.select(state.selection.symmetricDifference([id])) }
-            else if !state.selection.contains(id) { state.select([id]) }
+            if !state.selection.contains(id) { state.select(shiftDown ? state.selection.union([id]) : [id]) }
         } else if !shiftDown && !textTool { state.select([]) }
     }
     override func mouseDragged(with event: NSEvent) {
@@ -158,7 +157,9 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         if textTool {
             beginNewText(at: dragged ? rect.origin : dragStart, width: dragged ? max(12, rect.width) : nil)
         } else if moveBase != nil { state.finish(from: original) }
-        else if !dragged && !shiftDown, let id = downID { state.select([id]) }
+        else if !dragged, let id = downID {
+            state.select(shiftDown ? original.selection.symmetricDifference([id]) : [id])
+        }
     }
     private func clearGesture() {
         original = nil
@@ -215,7 +216,8 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     }
     override func layout() { super.layout(); positionInput() }
     func textDidChange(_ notification: Notification) {
-        guard let field = input, let i = state.scene.elements.firstIndex(where: { $0.id == editingID }) else { return }
+        guard let field = input, !field.hasMarkedText(),
+              let i = state.scene.elements.firstIndex(where: { $0.id == editingID }) else { return }
         var v = state.value
         v.scene.elements[i].text = field.string
         SceneTextLayout.fit(&v.scene.elements[i], minimumHeight: minimumHeight)

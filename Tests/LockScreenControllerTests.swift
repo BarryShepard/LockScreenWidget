@@ -1,5 +1,23 @@
 import AppKit
 
+/// Observe real AppKit invalidation requests without depending on when the host
+/// WindowServer happens to service a visible layer's pending display.
+private final class InvalidationObservingSceneView: SceneDisplayView {
+    var invalidations = 0
+    var clears = 0
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            if newValue { invalidations += 1 } else { clears += 1 }
+            super.needsDisplay = newValue
+        }
+    }
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        invalidations += 1
+        super.setNeedsDisplay(invalidRect)
+    }
+}
+
 @main struct LockScreenControllerTests {
     static func main() throws {
         let _ = NSApplication.shared
@@ -60,7 +78,127 @@ import AppKit
         assert(editor.window?.isVisible == false)
         editor.close()
         try checkSceneIntegration(model: model)
+        try checkTextPersistence(model: model)
         print("Panel lifecycle checks passed: repeated tests, lock/unlock restoration, disable and shutdown.")
+    }
+
+    static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+
+    static func privatePanel() -> OverlayPanel {
+        OverlayPanel(screenFrame: CGRect(x: 0, y: 0, width: 100, height: 80))
+    }
+
+    static func checkTextPersistence(model: ApplicationModel) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try SceneStore(directory: directory)
+        let empty = EditorScene(canvasSize: CGSize(width: 800, height: 500))
+        var panel: OverlayPanel?
+        let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
+            let next = privatePanel()
+            panel = next
+            return [next]
+        }, scheduleAfter: { _, _ in })
+        routing.start()
+        routing.testPanel()
+        defer { routing.stop() }
+
+        func editor(hasSavedScene: Bool) -> (SceneEditorWindowController, SceneCanvasView) {
+            let editor = SceneEditorWindowController(scene: empty, hasSavedScene: hasSavedScene, store: store)
+            editor.onSceneChange = { routing.sceneDidChange($0, store: store) }
+            let canvas = descendants(editor.window!.contentView!).compactMap { $0 as? SceneCanvasView }.first!
+            return (editor, canvas)
+        }
+        func begin(_ canvas: SceneCanvasView) -> NSTextView {
+            canvas.createCenteredText()
+            return descendants(canvas).compactMap { $0 as? NSTextView }.first!
+        }
+        func escape(_ field: NSTextView) { field.doCommand(by: #selector(NSResponder.cancelOperation(_:))) }
+        func awaitDebounce() { RunLoop.main.run(until: Date().addingTimeInterval(0.65)) }
+        func checkConsumer(_ expected: EditorScene?) throws {
+            let loaded = try store.load()
+            assert(loaded == expected, "Persisted scene must agree with the active editor")
+            if let expected {
+                assert((panel?.contentView as? SceneDisplayView)?.scene == expected, "Panel must see the saved scene")
+            } else { assert(panel?.contentView is CountdownView, "First-run legacy fallback must be restored") }
+        }
+        let (firstEditor, canvas) = editor(hasSavedScene: false)
+        for waitForSave in [false, true] {
+            let field = begin(canvas)
+            field.insertText("А", replacementRange: NSRange(location: NSNotFound, length: 0))
+            if waitForSave {
+                awaitDebounce()
+                assert(firstEditor.window?.firstResponder === field && !canvas.state.canUndo)
+                assert(firstEditor.scene.elements.first?.text == "А")
+                try checkConsumer(firstEditor.scene)
+            }
+            field.deleteBackward(nil)
+            escape(field)
+            assert(canvas.state.value.scene == empty && !canvas.state.canUndo)
+            try checkConsumer(nil)
+            awaitDebounce()
+            try checkConsumer(nil)
+        }
+
+        let field = begin(canvas)
+        let selection = NSRange(location: NSNotFound, length: 0)
+        field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
+        awaitDebounce()
+        assert(field.hasMarkedText() && firstEditor.scene.elements.first?.text == "" && !canvas.state.canUndo)
+        try checkConsumer(nil)
+        field.insertText("Т", replacementRange: selection)
+        field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
+        assert(field.hasMarkedText(), "Exercise the native composing state")
+        awaitDebounce()
+        assert(field.hasMarkedText() && firstEditor.window?.firstResponder === field)
+        assert(firstEditor.scene.elements.first?.text == "Т" && !canvas.state.canUndo)
+        try checkConsumer(firstEditor.scene)
+        field.insertText("екст", replacementRange: selection)
+        awaitDebounce()
+        assert(!field.hasMarkedText() && firstEditor.window?.firstResponder === field)
+        assert(firstEditor.scene.elements.first?.text == "Текст" && !canvas.state.canUndo)
+        try checkConsumer(firstEditor.scene)
+        escape(field)
+        assert(canvas.state.canUndo)
+        canvas.editSelection()
+        let existing = descendants(canvas).compactMap { $0 as? NSTextView }.first!
+        existing.insertText("Новое", replacementRange: NSRange(location: 0, length: (existing.string as NSString).length))
+        awaitDebounce()
+        assert(firstEditor.window?.firstResponder === existing && firstEditor.scene.elements.first?.text == "Новое")
+        try checkConsumer(firstEditor.scene)
+        escape(existing)
+        let committed = firstEditor.scene
+        let discarded = begin(canvas)
+        discarded.insertText("Я", replacementRange: selection)
+        awaitDebounce()
+        try checkConsumer(firstEditor.scene)
+        discarded.deleteBackward(nil)
+        escape(discarded)
+        assert(firstEditor.scene == committed, "Discard preserves the existing nonempty document")
+        try checkConsumer(committed)
+        canvas.undo(nil)
+        assert(firstEditor.scene.elements.first?.text == "Текст")
+        canvas.undo(nil)
+        assert(!canvas.state.canUndo && firstEditor.scene == empty, "Typing registers exactly one scene Undo on completion")
+        canvas.redo(nil)
+        canvas.redo(nil)
+        canvas.deleteBackward(nil)
+        assert(firstEditor.scene == empty)
+        try checkConsumer(empty)
+        firstEditor.close()
+
+        // Reopen the deliberately empty document and discard another provisional insertion.
+        let (reopened, secondCanvas) = editor(hasSavedScene: true)
+        let provisional = begin(secondCanvas)
+        provisional.insertText("Я", replacementRange: selection)
+        awaitDebounce()
+        try checkConsumer(reopened.scene)
+        provisional.deleteBackward(nil)
+        escape(provisional)
+        assert(!secondCanvas.state.canUndo)
+        try checkConsumer(empty)
+        reopened.close()
+        print("Text persistence checks passed: active first typing and marked input, single Undo, immediate/debounced discard, committed empty document and fallback.")
     }
 
     static func checkSceneIntegration(model: ApplicationModel) throws {
@@ -71,7 +209,7 @@ import AppKit
         assert(!startup.hasSavedScene && startup.scene.elements.isEmpty && startup.scene.canvasSize == size)
         assert(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("scene.json").path),
                "First-run resolution must not save the empty editing scene")
-        let sceneEditor = SceneEditorWindowController(scene: startup.scene, store: startup.store)
+        let sceneEditor = SceneEditorWindowController(scene: startup.scene, hasSavedScene: startup.hasSavedScene, store: startup.store)
         assert(sceneEditor.window != nil && sceneEditor.window?.contentView != nil,
                "Native primary editor must eagerly construct its first window")
         sceneEditor.flush()
@@ -88,9 +226,8 @@ import AppKit
         try corrupt.write(to: document)
         let failed = try SceneStartup.load(canvasSize: size) { directory }
         assert(!failed.hasSavedScene && failed.persistenceError != nil)
-        let blocked = SceneEditorWindowController(scene: failed.scene, store: failed.store)
+        let blocked = SceneEditorWindowController(scene: failed.scene, hasSavedScene: failed.hasSavedScene, store: failed.store)
         blocked.setPersistenceBlocked(failed.persistenceError!)
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         let canvas = descendants(blocked.window!.contentView!).compactMap { $0 as? SceneCanvasView }.first!
         canvas.createCenteredText()
         let text = descendants(canvas).compactMap { $0 as? NSTextView }.first!
@@ -98,6 +235,13 @@ import AppKit
         text.didChangeText()
         blocked.flush()
         assert(blocked.scene.elements.first?.text == "Only in memory")
+        let discarded = { () -> NSTextView in
+            canvas.createCenteredText()
+            return descendants(canvas).compactMap { $0 as? NSTextView }.first!
+        }()
+        discarded.insertText("Я", replacementRange: NSRange(location: NSNotFound, length: 0))
+        discarded.deleteBackward(nil)
+        discarded.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         blocked.close()
         let preserved = try Data(contentsOf: document)
         assert(preserved == corrupt,
@@ -122,6 +266,14 @@ import AppKit
         assert(SceneScreenIdentity.matchingIndex(target: nil, available: ["other"]) == nil)
         assert(SceneScreenIdentity.matchingIndex(target: "launch", available: ["launch", "other"]) == 0)
 
+        for frame in [NSRect(x: 1440, y: 0, width: 1280, height: 800),
+                      NSRect(x: -1280, y: 900, width: 1280, height: 720),
+                      NSRect(x: 160, y: -1080, width: 1920, height: 1080)] {
+            let placed = OverlayPanel(screenFrame: frame)
+            assert(placed.frame == frame, "The actual panel must occupy its matched global display rectangle")
+            placed.close()
+        }
+
         let menu = AppDelegate.makeEditMenu()
         let actions = menu.items.filter { !$0.isSeparatorItem }
         assert(actions.count == 11 && actions.allSatisfy { $0.target == nil })
@@ -132,11 +284,7 @@ import AppKit
 
         var created: [OverlayPanel] = []
         let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
-            let panel = OverlayPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 80),
-                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.isReleasedWhenClosed = false
-            panel.ignoresMouseEvents = true
-            panel.contentView = CountdownView(overlay: true)
+            let panel = privatePanel()
             created.append(panel)
             return [panel]
         }, scheduleAfter: { _, _ in })
@@ -146,10 +294,30 @@ import AppKit
         routing.sceneDidChange(startup.scene, store: startup.store)
         assert(created.count == 2 && !created[0].isVisible, "Changing content routes must hide the old panel first")
         assert((created[1].contentView as? SceneDisplayView)?.scene == startup.scene)
+        let display = InvalidationObservingSceneView(scene: startup.scene, store: startup.store)
+        created[1].contentView = display
+        let clean = display.invalidations
+        for tick in 1...3 {
+            routing.refresh(at: Date(timeIntervalSince1970: Double(1_800_000_000 + tick)))
+            assert(display.invalidations == clean, "Tick dirtied view")
+        }
+        routing.settingsDidChange()
+        assert(display.invalidations == clean, "Countdown ticks and legacy settings must leave a static composition clean")
+        routing.sceneDidChange(startup.scene, store: startup.store)
+        assert(display.invalidations == clean, "Publishing an unchanged snapshot must leave the view clean")
+        display.setFrameSize(CGSize(width: display.frame.width + 10, height: display.frame.height))
+        assert(display.invalidations > clean, "Resizing the display view must redraw its viewport")
+        let resized = display.invalidations
+        display.setNeedsDisplay(display.bounds)
+        let clears = display.clears
+        routing.refresh(at: Date())
+        assert(display.invalidations > resized && display.clears == clears,
+               "AppKit display requests must survive countdown refresh")
+        let beforeEdit = display.invalidations
         var changed = startup.scene
         changed.elements = [SceneElement(kind: .text, frame: CGRect(x: 5, y: 5, width: 90, height: 30), text: "Live scene")]
         routing.sceneDidChange(changed, store: startup.store)
-        assert(created.count == 2 && (created[1].contentView as? SceneDisplayView)?.scene == changed)
+        assert(created.count == 2 && display.scene == changed && display.invalidations > beforeEdit)
         routing.sceneDidChange(startup.scene, store: startup.store)
         assert(created[1].contentView is SceneDisplayView, "Empty committed content cannot restore countdown fallback")
         assert(!created[1].canBecomeKey && !created[1].canBecomeMain && created[1].ignoresMouseEvents)

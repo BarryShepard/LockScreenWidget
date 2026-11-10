@@ -79,6 +79,99 @@ import AppKit
         check(model.value == beforeLastEdit && !model.canUndo, "Undo still reaches the previous completed edit in one step")
     }
 
+    static func shiftGestures(_ store: SceneStore) {
+        let first = item(50), second = item(300)
+        let model = SceneEditingState(EditorScene(canvasSize: size, elements: [first, second]))
+        let canvas = SceneCanvasView(state: model, store: store)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas
+        func mouse(_ type: NSEvent.EventType, dx: CGFloat = 0, dy: CGFloat = 0) -> NSEvent {
+            let point = CGPoint(x: second.frame.midX + 22 + dx, y: second.frame.midY + 22 + dy)
+            return NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [.shift],
+                                      timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        for ids: Set<UUID> in [[second.id], [first.id, second.id]] {
+            model.select(ids)
+            let original = model.value
+            canvas.mouseDown(with: mouse(.leftMouseDown))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, dx: 12, dy: 7))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, dx: 24, dy: 40))
+            canvas.mouseUp(with: mouse(.leftMouseUp, dx: 24, dy: 40))
+            check(model.value == SceneEditingState.moved(original, dx: 24, dy: 0),
+                  "Shift held before dragging moves the whole selection on its initial axis")
+            model.undo()
+            check(model.value == original && !model.canUndo, "One Undo for a Shift-constrained drag")
+        }
+        canvas.mouseDown(with: mouse(.leftMouseDown))
+        canvas.mouseDragged(with: mouse(.leftMouseDragged, dx: 1))
+        canvas.mouseUp(with: mouse(.leftMouseUp, dx: 1))
+        check(model.selection == [first.id], "Shift-click removes a selected layer below drag threshold")
+        canvas.mouseDown(with: mouse(.leftMouseDown))
+        canvas.mouseUp(with: mouse(.leftMouseUp))
+        check(model.selection == [first.id, second.id] && !model.canUndo, "Shift-click adds a layer without history")
+    }
+
+    static func truncatedImports(_ directory: URL, _ store: SceneStore) throws {
+        let width = 128, height = 64
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                      colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        var seed: UInt32 = 10
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = y * bitmap.bytesPerRow + x * 4
+                for channel in 0..<3 {
+                    seed = 1664525 &* seed &+ 1013904223
+                    bitmap.bitmapData![offset + channel] = UInt8(seed >> 24)
+                }
+                bitmap.bitmapData![offset + 3] = 255
+            }
+        }
+        let complete = bitmap.representation(using: .png, properties: [:])!
+        let truncated = complete.prefix(256)
+        check(complete.count > 256 && NSImage(data: truncated)?.size == CGSize(width: width, height: height),
+              "Recognizable PNG prefix retains the original dimensions")
+        let model = SceneEditingState(EditorScene(canvasSize: size))
+        let empty = model.value
+        let good = SceneImageInput(data: complete), bad = SceneImageInput(data: truncated)
+        try model.importImages([good], at: .add(model.insertionPoint), store: store)
+        let before = model.value, layer = model.selected[0]
+        let url = store.imageURL(for: layer.assetID!)!
+        let assets = directory.appendingPathComponent("Assets")
+        let names = try FileManager.default.contentsOfDirectory(atPath: assets.path).sorted()
+        let incompleteFile = directory.appendingPathComponent("incomplete.png")
+        try truncated.write(to: incompleteFile)
+        for importSource in [{ try store.importImage(data: truncated) }, { try store.importImage(at: incompleteFile) }] {
+            do { _ = try importSource(); fatalError("Shared store boundary accepted a truncated PNG") }
+            catch is SceneError { }
+        }
+        for (inputs, target) in [([bad], SceneImageDestination.replace(layer.id)), ([good, bad], .add(.zero))] {
+            do {
+                try model.importImages(inputs, at: target, store: store)
+                fatalError("Truncated PNG accepted")
+            } catch is SceneError { }
+            check(model.value == before && !model.canRedo, "Failed imports keep the scene, selection and redo history")
+            check(try FileManager.default.contentsOfDirectory(atPath: assets.path).sorted() == names,
+                  "A mixed batch creates no partial assets")
+            check(try Data(contentsOf: url) == complete, "Replacement preserves every byte of the source pixels")
+            model.undo()
+            check(model.value == empty && !model.canUndo, "Previous add remains the only Undo step")
+            model.redo()
+            check(model.value == before, "Redo still restores the original image and identity")
+        }
+        model.undo()
+        do {
+            try model.importImages([good, bad], at: .add(.zero), store: store)
+            fatalError("Truncated PNG accepted with pending Redo")
+        } catch is SceneError { }
+        check(model.value == empty && model.canRedo && !model.canUndo, "A failed batch preserves pending Redo")
+        model.redo()
+        check(model.value == before, "Pending Redo still restores the original scene after failure")
+        print("PNG integrity checks passed: opaque 128×64 PNG (\(complete.count) bytes), 256-byte prefix rejected for replacement and batch.")
+    }
+
     static func imageBytes(_ type: NSBitmapImageRep.FileType, _ w: Int, _ h: Int) -> Data {
         let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,pixelsWide: w,pixelsHigh: h,bitsPerSample: 8,samplesPerPixel: 4,
                                       hasAlpha: true,isPlanar: false,colorSpaceName: .deviceRGB,bytesPerRow: 0,bitsPerPixel: 0)!
@@ -157,7 +250,9 @@ import AppKit
         geometryAndHistory()
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
+        shiftGestures(store)
+        try truncatedImports(directory, store)
         try imports(directory,store); try widths(store)
-        print("SceneEditingTests passed: rotated selection, history, layer order, group movement, Escape during move/copy, image routing, private pasteboard and text widths")
+        print("SceneEditingTests passed: rotated selection, history, layer order, group movement, Shift-click and Shift-held drag, Escape during move/copy, image routing, private pasteboard and text widths")
     }
 }

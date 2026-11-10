@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let model = ApplicationModel(catalog: try loadEventCatalog(url), settings: loadEditorSettings())
             self.model = model
             let editor = EditorWindowController(model: model)
-            let sceneEditor = SceneEditorWindowController(scene: startup.scene, store: startup.store)
+            let sceneEditor = SceneEditorWindowController(scene: startup.scene, hasSavedScene: startup.hasSavedScene, store: startup.store)
             if let error = startup.persistenceError {
                 sceneEditor.setPersistenceBlocked("\(error) Изменения доступны только в памяти. Исходный документ не будет перезаписан.")
             }

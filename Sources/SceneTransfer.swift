@@ -65,32 +65,25 @@ extension SceneEditingState {
             }
         }
         guard !inputs.isEmpty else { return }
-        // Decode the whole batch before creating any assets or changing the scene.
-        let sizes = try inputs.map { input -> CGSize in
-            guard let image = NSImage(data: input.data), image.isValid,
-                  image.size.width.isFinite, image.size.height.isFinite, image.size.width > 0, image.size.height > 0
-            else { throw SceneError.invalid("Файл «\(input.name)» не является поддерживаемым изображением.") }
-            return image.size
-        }
-        let ids = try inputs.map { try store.importImage(data: $0.data) }
+        let assets = try store.importImages(data: inputs.map(\.data))
         change { v in
             switch destination {
             case .replace(let target):
                 guard let i = v.scene.elements.firstIndex(where: { $0.id == target }) else { return }
-                let frame = v.scene.elements[i].frame, size = sizes[0]
+                let frame = v.scene.elements[i].frame, size = assets[0].size
                 let scale = max(frame.width/size.width, frame.height/size.height)
                 let w = size.width*scale, h = size.height*scale
-                v.scene.elements[i].assetID = ids[0]
+                v.scene.elements[i].assetID = assets[0].assetID
                 v.scene.elements[i].imageRect = CGRect(x: (frame.width-w)/2, y: (frame.height-h)/2, width: w, height: h)
                 v.selection = [target]
             case .add(let point):
                 v.selection = []
-                for i in ids.indices {
-                    let size = sizes[i], canvas = v.scene.canvasSize
+                for i in assets.indices {
+                    let size = assets[i].size, canvas = v.scene.canvasSize
                     let scale = min(1, canvas.width*0.65/size.width, canvas.height*0.65/size.height)
                     let w = size.width*scale, h = size.height*scale, offset = CGFloat(i)*16
                     let frame = CGRect(x: point.x-w/2+offset, y: point.y-h/2+offset, width: w, height: h)
-                    let e = SceneElement(kind: .image, frame: frame, name: inputs[i].name, assetID: ids[i],
+                    let e = SceneElement(kind: .image, frame: frame, name: inputs[i].name, assetID: assets[i].assetID,
                                          imageRect: CGRect(origin: .zero, size: frame.size))
                     v.scene.elements.append(e); v.selection.insert(e.id)
                 }

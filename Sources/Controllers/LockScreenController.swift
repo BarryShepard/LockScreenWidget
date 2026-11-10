@@ -82,24 +82,27 @@ final class LockScreenController: NSObject {
             cancelPanelTest(completion: locked ? .deferEditor : .restoreEditor)
             updatePanels(at: now)
         }
-        renderPanels()
+        renderCountdownPanels()
         for panel in panels where (locked && model.isEnabled) || testingPanel {
             // loginwindow may finish ordering its shield after the lock notification.
             panel.orderFrontRegardless()
         }
     }
 
-    func settingsDidChange() { renderPanels() }
+    func settingsDidChange() { renderCountdownPanels() }
 
     /// A committed empty scene is still scene content; nil alone means legacy fallback.
-    func sceneDidChange(_ scene: EditorScene, store: SceneStore) {
-        let wasLegacy = self.scene == nil
+    func sceneDidChange(_ scene: EditorScene?, store: SceneStore) {
+        guard self.scene != scene else { return }
+        let routeChanged = (self.scene == nil) != (scene == nil)
         self.scene = scene
         sceneStore = store
-        if wasLegacy {
+        if routeChanged {
             clearPanels()
             if observing { updatePanels(at: Date()) }
-        } else { renderPanels() }
+        } else if let scene {
+            for panel in panels { (panel.contentView as? SceneDisplayView)?.scene = scene }
+        }
     }
 
     @objc func toggleEnabled() {
@@ -185,19 +188,19 @@ final class LockScreenController: NSObject {
             logDiagnostic("space: attached panels=\(panels.count)")
         }
         currentDisplay = makeCountdownDisplay(event: selectNextEvent(in: model.catalog, now: now), now: now)
-        renderPanels()
+        renderCountdownPanels()
         for panel in panels {
             panel.level = .statusBar
             panel.contentView?.isHidden = false
-            panel.contentView?.display()
+            panel.contentView?.displayIfNeeded()
             panel.orderFrontRegardless()
         }
     }
 
-    private func renderPanels() {
+    private func renderCountdownPanels() {
+        guard scene == nil else { return }
         for panel in panels {
-            if let scene { (panel.contentView as? SceneDisplayView)?.scene = scene }
-            else { (panel.contentView as? CountdownView)?.render(content: currentDisplay, settings: model.settings) }
+            (panel.contentView as? CountdownView)?.render(content: currentDisplay, settings: model.settings)
         }
     }
 
@@ -211,13 +214,10 @@ final class LockScreenController: NSObject {
                 logDiagnostic("scene-screen: launch display unavailable; no replacement display selected")
                 return []
             }
-            result = [OverlayPanel(screen: screens[index])]
-        } else { result = NSScreen.screens.map { OverlayPanel(screen: $0) } }
+            result = [OverlayPanel(screenFrame: screens[index].frame)]
+        } else { result = NSScreen.screens.map { OverlayPanel(screenFrame: $0.frame) } }
         if let scene, let store = sceneStore {
             for panel in result {
-                // The logical scene occupies the whole target display, unlike the
-                // legacy countdown's compact panel. No editor chrome is installed.
-                if let screen = panel.screen { panel.setFrame(screen.frame, display: false) }
                 panel.contentView = SceneDisplayView(scene: scene, store: store)
                 panel.contentView?.isHidden = true
             }

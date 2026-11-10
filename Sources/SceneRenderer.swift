@@ -90,8 +90,8 @@ final class SceneRenderer {
     }
 }
 
-final class SceneDisplayView: NSView {
-    var scene: EditorScene { didSet { needsDisplay = true } }
+class SceneDisplayView: NSView {
+    var scene: EditorScene { didSet { if scene != oldValue { needsDisplay = true } } }
     private let renderer: SceneRenderer
     init(scene: EditorScene, store: SceneStore) {
         self.scene = scene; renderer = SceneRenderer(store: store)
@@ -101,5 +101,10 @@ final class SceneDisplayView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize != frame.size
+        super.setFrameSize(newSize)
+        if resized { needsDisplay = true }
+    }
     override func draw(_ dirtyRect: NSRect) { renderer.draw(scene, in: SceneViewport(size: scene.canvasSize, in: bounds)) }
 }
