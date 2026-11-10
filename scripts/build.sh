@@ -16,16 +16,21 @@ for architecture in "${ARCHITECTURES[@]}"; do
   binary="$PROJECT_DIR/build/TEotW-$architecture"
   /usr/bin/swiftc -swift-version 5 -O -module-cache-path "$PROJECT_DIR/build/ModuleCache" \
     -target "$architecture-apple-macosx15.0" -framework AppKit -framework CoreText -framework CoreGraphics \
-    "$PROJECT_DIR"/Sources/Models/*.swift "$PROJECT_DIR"/Sources/Views/*.swift \
-    "$PROJECT_DIR"/Sources/Controllers/*.swift "$PROJECT_DIR"/Sources/Infrastructure/*.swift \
-    "$PROJECT_DIR"/Sources/Scene*.swift \
+    "$PROJECT_DIR"/Sources/Features/*/Models/*.swift \
+    "$PROJECT_DIR"/Sources/Features/*/Views/*.swift \
+    "$PROJECT_DIR"/Sources/Features/*/Controllers/*.swift \
+    "$PROJECT_DIR"/Sources/Shared/Models/*.swift "$PROJECT_DIR"/Sources/Shared/Views/*.swift \
+    "$PROJECT_DIR"/Sources/Shared/Scene/Models/*.swift \
+    "$PROJECT_DIR"/Sources/Shared/Scene/Rendering/*.swift \
+    "$PROJECT_DIR"/Sources/Shared/Scene/Storage/*.swift \
+    "$PROJECT_DIR"/Sources/Infrastructure/*.swift \
     "$PROJECT_DIR/Sources/AppDelegate.swift" "$PROJECT_DIR/Sources/main.swift" \
     -o "$binary"
   BINARIES+=("$binary")
 done
 /usr/bin/lipo -create "${BINARIES[@]}" -output "$APP_DIR/Contents/MacOS/TEotW"
 /usr/bin/swiftc -swift-version 5 -module-cache-path "$PROJECT_DIR/build/ModuleCache" -framework AppKit \
-  "$PROJECT_DIR/Sources/Views/StatusIcon.swift" "$PROJECT_DIR/scripts/GenerateIcon.swift" -o "$PROJECT_DIR/build/GenerateIcon"
+  "$PROJECT_DIR/Sources/Shared/Views/StatusIcon.swift" "$PROJECT_DIR/scripts/GenerateIcon.swift" -o "$PROJECT_DIR/build/GenerateIcon"
 "$PROJECT_DIR/build/GenerateIcon" "$PROJECT_DIR/build/AppIcon.iconset"
 cp "$PROJECT_DIR/build/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 cp "$PROJECT_DIR/Resources/events.json" "$APP_DIR/Contents/Resources/"

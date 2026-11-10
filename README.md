@@ -72,11 +72,13 @@ Foundation-тесты можно запустить тем же скриптом
 
 ## Архитектура MVC
 
-- `Sources/Models`: типы данных с обязательным суффиксом `Model`, отдельные функции расчёта/проверки и чтение/сохранение JSON и UserDefaults. `ApplicationModel` хранит общий каталог, настройки и состояние включения показа. Типы данных не содержат расчётов и не зависят от AppKit.
-- `Sources/Views`: `CountdownView`, `TypographyInspectorView`, `EditorView`, `EditorWindow`, `OverlayPanel` и код построения шрифтов/иконки. Представления получают снимки состояния, рисуют их и передают ввод контроллеру. Кнопки используют `target-action` с контроллером в качестве цели; холст передаёт координаты и клавиши через callbacks. Представления не сохраняют настройки и не рассчитывают отсчёт.
-- `Sources/Controllers`: `EditorWindowController` изменяет настройки и управляет редактором; `LockScreenController` управляет уведомлениями, панелями и тестовым показом; `CountdownController` запускает один общий секундный таймер. Все расчёты отсчёта получают `now` явно.
-- `Sources/Infrastructure`: адаптер `LockScreenSpace`, чтение состояния сеанса и диагностический журнал. `Resources/events.json` остаётся каталогом событий.
-- `Sources/Scene*.swift`: модель и хранилище личной сцены, общий рендерер редактора и прозрачной панели, слои, инспектор и окно `SceneEditorWindowController`.
+- `Sources/Features/Countdown` объединяет исходный редактор отсчёта. В `Models` находятся данные, расчёты, проверки и хранение настроек. В `Views` находятся холст, инспектор типографики, окно и код построения шрифтов. В `Controllers` находятся `EditorWindowController` и общий секундный таймер `CountdownController`.
+- `Sources/Features/SceneEditor` объединяет редактор личной композиции. В `Models` находится `SceneEditingStateModel` с выделением и историей изменений. В `Views` находятся `SceneCanvasView` и `SceneInspectorView`. В `Controllers` находятся `SceneEditorWindowController` и обработка переноса данных `SceneTransfer`.
+- `Sources/Features/LockScreen` содержит `LockScreenController` и восстановление окон после теста в `Controllers`, а прозрачную панель `OverlayPanel` в `Views`.
+- `Sources/Shared/Scene` содержит общий документ сцены в `Models`, отрисовку редактора и прозрачной панели в `Rendering`, хранилище документа и изображений в `Storage`.
+- `Sources/Shared/Models/ApplicationModel.swift` хранит общий каталог, настройки и состояние включения показа.
+- `Sources/Shared/Views/StatusIcon.swift` используется строкой меню приложения и генератором иконки.
+- `Sources/Infrastructure` содержит адаптер `LockScreenSpace`, чтение состояния сеанса и диагностический журнал. Каталог событий находится в `Resources/events.json`.
 - `AppDelegate` один раз загружает сцену, создаёт оба редактора, соединяет callbacks, строит меню и запускает/останавливает контроллеры. `LockScreenController` выбирает между прежним отсчётом и новой сценой, сохраняя управление блокировкой.
 
 Действие проходит по цепочке `View → Controller → функция расчёта/проверки → обновление Model → View`. Редактор и панели читают одну модель настроек; выбранная карточка — временное состояние контроллера редактора. Имена файлов совпадают с основными типами; файлы свободных функций названы по назначению. Подклассы NSView заканчиваются на `View`, окна и панели — на `Window`/`Panel`, контроллеры — на `Controller`. Имена типов используют UpperCamelCase, функций и свойств — lowerCamelCase.
