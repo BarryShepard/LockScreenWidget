@@ -54,7 +54,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         addField("opacity", "Непрозр., %")
         addMenu("family", "Шрифт", families.map { $0 == "System" ? "Системный" : $0 })
         addMenu("weight", "Начертание", ["Сверхтонкое","Тонкое","Лёгкое","Обычное","Среднее","Полужирное","Жирное","Тяжёлое","Чёрное"])
-        addField("size", "Кегль, pt", text: true); addField("line", "Интерлиньяж", text: true)
+        addField("size", "Кегль, pt", text: true); addField("line", "Строка, pt", text: true)
         addField("spacing", "Трекинг, %", text: true); addField("color", "Цвет, HEX", text: true)
         addMenu("align", "По ширине", ["Слева","По центру","Справа"])
         addMenu("valign", "По высоте", ["Сверху","По центру","Снизу"])

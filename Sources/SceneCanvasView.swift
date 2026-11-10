@@ -154,12 +154,23 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         guard let original = original else { return }
         dragCurrent = scenePoint(event.locationInWindow)
         let rect = dragRect, dragged = dragging
-        self.original = nil; dragging = false
+        defer { clearGesture() }
         if textTool {
             beginNewText(at: dragged ? rect.origin : dragStart, width: dragged ? max(12, rect.width) : nil)
         } else if moveBase != nil { state.finish(from: original) }
         else if !dragged && !shiftDown, let id = downID { state.select([id]) }
-        moveBase = nil; downID = nil; needsDisplay = true
+    }
+    private func clearGesture() {
+        original = nil
+        moveBase = nil
+        downID = nil
+        axisX = nil
+        shiftDown = false
+        optionDown = false
+        dragging = false
+        dragStart = .zero
+        dragCurrent = .zero
+        needsDisplay = true
     }
     private func beginNewText(at p: CGPoint, width: CGFloat?) {
         textTool = false
@@ -235,6 +246,10 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     }
     override func keyDown(with event: NSEvent) {
         guard input == nil else { super.keyDown(with: event); return }
+        if event.keyCode == 53, original != nil {
+            cancelOperation(nil) // Option may still be held from the start of a copy drag.
+            return
+        }
         if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             let d: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
             switch event.keyCode {
@@ -251,7 +266,17 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         }
         super.keyDown(with: event)
     }
-    override func cancelOperation(_ sender: Any?) { if textTool { textTool = false } else { state.select([]) } }
+    override func cancelOperation(_ sender: Any?) {
+        if let beforeMouseDown = original {
+            clearGesture()
+            textTool = false
+            state.preview(beforeMouseDown)
+        } else if textTool {
+            textTool = false
+        } else {
+            state.select([])
+        }
+    }
     override func deleteBackward(_ sender: Any?) { state.deleteSelection(); focus() }
     override func selectAll(_ sender: Any?) { state.select(Set(state.scene.elements.map(\.id))) }
     @objc func copy(_ sender: Any?) { _ = writeSelection() }

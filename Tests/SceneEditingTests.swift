@@ -35,6 +35,50 @@ import AppKit
         model.deleteSelection(); check(model.selection.isEmpty && model.scene.elements.count == 4, "Delete clears selection")
         model.undo(); check(model.selection.count == 2, "Undo deletion restores selected group")
     }
+    static func cancelCanvasDrag(_ store: SceneStore, duplicate: Bool) {
+        _ = NSApplication.shared
+        let first = item(50), second = item(300)
+        let model = SceneEditingState(EditorScene(canvasSize: size, elements: [first, second]))
+        model.select(duplicate ? [first.id, second.id] : [first.id])
+        let beforeLastEdit = model.value
+        model.editSelected { $0.name = "Сохранённый слой" }
+        let beforeMouseDown = model.value
+        var commits = 0
+        model.onUpdate = { if case .committed = $0 { commits += 1 } }
+
+        let canvas = SceneCanvasView(state: model, store: store)
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 844, height: 544)),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas
+        let flags: NSEvent.ModifierFlags = duplicate ? [.option] : []
+        func mouse(_ type: NSEvent.EventType, dx: CGFloat) -> NSEvent {
+            // Canvas has a 22 pt inset on each side, leaving the scene at 1:1.
+            let point = CGPoint(x: second.frame.midX + 22 + dx, y: second.frame.midY + 22)
+            return NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: flags,
+                                      timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        canvas.mouseDown(with: mouse(.leftMouseDown, dx: 0))
+        canvas.mouseDragged(with: mouse(.leftMouseDragged, dx: 28))
+        if duplicate {
+            check(model.scene.elements.count == 4 && model.selection.isDisjoint(with: beforeMouseDown.selection),
+                  "Option-drag previews copies of the selected group")
+        } else {
+            check(model.selected.first?.id == second.id && model.selected.first?.frame.minX == second.frame.minX + 28,
+                  "Move previews a different selection and frame")
+        }
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
+                                      charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        canvas.keyDown(with: escape)
+        check(model.value == beforeMouseDown, "Escape restores all original elements, IDs, frames and selection")
+        canvas.mouseDragged(with: mouse(.leftMouseDragged, dx: 40))
+        canvas.mouseUp(with: mouse(.leftMouseUp, dx: 40))
+        check(model.value == beforeMouseDown && commits == 0, "Events after cancellation cannot commit or trigger a save")
+        model.undo()
+        check(model.value == beforeLastEdit && !model.canUndo, "Undo still reaches the previous completed edit in one step")
+    }
+
     static func imageBytes(_ type: NSBitmapImageRep.FileType, _ w: Int, _ h: Int) -> Data {
         let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,pixelsWide: w,pixelsHigh: h,bitsPerSample: 8,samplesPerPixel: 4,
                                       hasAlpha: true,isPlanar: false,colorSpaceName: .deviceRGB,bytesPerRow: 0,bitsPerPixel: 0)!
@@ -110,7 +154,10 @@ import AppKit
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)
-        geometryAndHistory(); try imports(directory,store); try widths(store)
-        print("SceneEditingTests passed: rotated selection, history, layer order, group movement, image routing, private pasteboard and text widths")
+        geometryAndHistory()
+        cancelCanvasDrag(store, duplicate: false)
+        cancelCanvasDrag(store, duplicate: true)
+        try imports(directory,store); try widths(store)
+        print("SceneEditingTests passed: rotated selection, history, layer order, group movement, Escape during move/copy, image routing, private pasteboard and text widths")
     }
 }
