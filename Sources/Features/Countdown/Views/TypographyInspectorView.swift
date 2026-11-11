@@ -104,26 +104,22 @@ final class TypographyInspectorView: NSView {
         field.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
     }
 
-    func render(settings: EditorSettingsModel, selectedIndices indices: Set<Int>) {
-        let index = indices.min() ?? block.indexOfSelectedItem
-        if visibleBlockIndices(in: settings).contains(index) { block.selectItem(at: index) }
-        else { block.selectItem(at: 0) }
-        block.item(at: 2)?.isEnabled = settings.showInformation
-        information.state = settings.showInformation ? .on : .off
-        selectionLabel.stringValue = indices.isEmpty ? "Выберите блок на холсте" :
-            (indices.count == 1 ? "Настройки выбранного блока" : "Выбрано блоков: \(indices.count). Меняется только выбранное свойство.")
-        let style = settings.typography[block.indexOfSelectedItem]
-        let familyIndex = family.itemArray.firstIndex { ($0.representedObject as? String) == style.family } ?? 0
+    func render(_ presentation: TypographyInspectorPresentation) {
+        block.selectItem(at: presentation.selectedBlockIndex)
+        block.item(at: 2)?.isEnabled = presentation.isInformationVisible
+        information.state = presentation.isInformationVisible ? .on : .off
+        selectionLabel.stringValue = presentation.selectionText
+        let familyIndex = family.itemArray.firstIndex { ($0.representedObject as? String) == presentation.family } ?? 0
         family.selectItem(at: familyIndex)
-        weight.selectItem(at: style.weight)
-        size.stringValue = number(style.size)
-        lineHeight.stringValue = style.lineHeight == 0 ? "" : number(style.lineHeight)
-        spacing.stringValue = number(style.spacing)
-        horizontal.selectedSegment = style.alignment
-        vertical.selectedSegment = style.verticalAlignment
-        for control: NSControl in [family, weight, size, lineHeight, spacing, horizontal, vertical] { control.isEnabled = !indices.isEmpty }
-        centerButtons.forEach { $0.isEnabled = !indices.isEmpty }
+        weight.selectItem(at: presentation.weightIndex)
+        size.stringValue = presentation.sizeText
+        lineHeight.stringValue = presentation.lineHeightText
+        spacing.stringValue = presentation.spacingText
+        horizontal.selectedSegment = presentation.horizontalAlignmentIndex
+        vertical.selectedSegment = presentation.verticalAlignmentIndex
+        for control: NSControl in [family, weight, size, lineHeight, spacing, horizontal, vertical] {
+            control.isEnabled = presentation.areControlsEnabled
+        }
+        centerButtons.forEach { $0.isEnabled = presentation.areControlsEnabled }
     }
-
-    private func number(_ value: Double) -> String { String(format: "%g", value) }
 }

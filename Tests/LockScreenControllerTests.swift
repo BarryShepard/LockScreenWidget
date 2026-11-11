@@ -95,7 +95,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
                 let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                 defer { try? FileManager.default.removeItem(at: directory) }
                 let store = try SceneStore(directory: directory)
-                let empty = EditorScene(canvasSize: CGSize(width: 800, height: 500))
+                let empty = EditorSceneModel(canvasSize: CGSize(width: 800, height: 500))
                 var panel: OverlayPanel?
                 let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
                     let next = privatePanel(); panel = next; return [next]
@@ -111,7 +111,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
                 if !accepted.isEmpty { field.insertText(accepted, replacementRange: selection) }
                 field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
                 RunLoop.main.run(until: Date().addingTimeInterval(0.65))
-                assert(field.hasMarkedText() && canvas.state.scene.elements[0].text == accepted)
+                assert(field.hasMarkedText() && editor.scene.elements[0].text == accepted)
                 switch ending {
                 case "finish": canvas.finishText()
                 case "escape": field.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
@@ -119,15 +119,15 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
                 }
                 let saved = try store.load()
                 if accepted.isEmpty {
-                    assert(editor.scene == empty && saved == nil && !canvas.state.canUndo,
+                    assert(editor.scene == empty && saved == nil && !editor.canUndo,
                            "\(ending) must keep a marked-only first edit out of persistence/history")
                     assert(panel?.contentView is CountdownView)
                 } else {
                     assert(editor.scene.elements.count == 1 && editor.scene.elements[0].text == accepted)
-                    assert(saved == editor.scene && (panel?.contentView as? SceneDisplayView)?.scene == saved,
+                    assert(saved == editor.scene && (panel?.contentView as? SceneDisplayView)?.content == ScenePresentationController(store: store).content(for: editor.scene),
                            "\(ending) preserves the accepted prefix in both store and consumer")
                     canvas.undo(nil)
-                    assert(editor.scene == empty && !canvas.state.canUndo, "One Undo for accepted typing plus composition")
+                    assert(editor.scene == empty && !editor.canUndo, "One Undo for accepted typing plus composition")
                 }
                 editor.close()
             }
@@ -139,7 +139,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)
-        let empty = EditorScene(canvasSize: CGSize(width: 800, height: 500))
+        let empty = EditorSceneModel(canvasSize: CGSize(width: 800, height: 500))
         var panel: OverlayPanel?
         let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
             let next = privatePanel()
@@ -162,11 +162,11 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         }
         func escape(_ field: NSTextView) { field.doCommand(by: #selector(NSResponder.cancelOperation(_:))) }
         func awaitDebounce() { RunLoop.main.run(until: Date().addingTimeInterval(0.65)) }
-        func checkConsumer(_ expected: EditorScene?) throws {
+        func checkConsumer(_ expected: EditorSceneModel?) throws {
             let loaded = try store.load()
             assert(loaded == expected, "Persisted scene must agree with the active editor")
             if let expected {
-                assert((panel?.contentView as? SceneDisplayView)?.scene == expected, "Panel must see the saved scene")
+                assert((panel?.contentView as? SceneDisplayView)?.content == ScenePresentationController(store: store).content(for: expected), "Panel must see the saved scene")
             } else { assert(panel?.contentView is CountdownView, "First-run legacy fallback must be restored") }
         }
         let (firstEditor, canvas) = editor(hasSavedScene: false)
@@ -175,13 +175,13 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
             field.insertText("А", replacementRange: NSRange(location: NSNotFound, length: 0))
             if waitForSave {
                 awaitDebounce()
-                assert(firstEditor.window?.firstResponder === field && !canvas.state.canUndo)
+                assert(firstEditor.window?.firstResponder === field && !firstEditor.canUndo)
                 assert(firstEditor.scene.elements.first?.text == "А")
                 try checkConsumer(firstEditor.scene)
             }
             field.deleteBackward(nil)
             escape(field)
-            assert(canvas.state.value.scene == empty && !canvas.state.canUndo)
+            assert(firstEditor.scene == empty && !firstEditor.canUndo)
             try checkConsumer(nil)
             awaitDebounce()
             try checkConsumer(nil)
@@ -191,22 +191,22 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         let selection = NSRange(location: NSNotFound, length: 0)
         field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
         awaitDebounce()
-        assert(field.hasMarkedText() && firstEditor.scene.elements.first?.text == "" && !canvas.state.canUndo)
+        assert(field.hasMarkedText() && firstEditor.scene.elements.first?.text == "" && !firstEditor.canUndo)
         try checkConsumer(nil)
         field.insertText("Т", replacementRange: selection)
         field.setMarkedText("ка", selectedRange: NSRange(location: 2, length: 0), replacementRange: selection)
         assert(field.hasMarkedText(), "Exercise the native composing state")
         awaitDebounce()
         assert(field.hasMarkedText() && firstEditor.window?.firstResponder === field)
-        assert(firstEditor.scene.elements.first?.text == "Т" && !canvas.state.canUndo)
+        assert(firstEditor.scene.elements.first?.text == "Т" && !firstEditor.canUndo)
         try checkConsumer(firstEditor.scene)
         field.insertText("екст", replacementRange: selection)
         awaitDebounce()
         assert(!field.hasMarkedText() && firstEditor.window?.firstResponder === field)
-        assert(firstEditor.scene.elements.first?.text == "Текст" && !canvas.state.canUndo)
+        assert(firstEditor.scene.elements.first?.text == "Текст" && !firstEditor.canUndo)
         try checkConsumer(firstEditor.scene)
         escape(field)
-        assert(canvas.state.canUndo)
+        assert(firstEditor.canUndo)
         canvas.editSelection()
         let existing = descendants(canvas).compactMap { $0 as? NSTextView }.first!
         existing.insertText("Новое", replacementRange: NSRange(location: 0, length: (existing.string as NSString).length))
@@ -226,7 +226,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         canvas.undo(nil)
         assert(firstEditor.scene.elements.first?.text == "Текст")
         canvas.undo(nil)
-        assert(!canvas.state.canUndo && firstEditor.scene == empty, "Typing registers exactly one scene Undo on completion")
+        assert(!firstEditor.canUndo && firstEditor.scene == empty, "Typing registers exactly one scene Undo on completion")
         canvas.redo(nil)
         canvas.redo(nil)
         canvas.deleteBackward(nil)
@@ -242,7 +242,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         try checkConsumer(reopened.scene)
         provisional.deleteBackward(nil)
         escape(provisional)
-        assert(!secondCanvas.state.canUndo)
+        assert(!reopened.canUndo)
         try checkConsumer(empty)
         reopened.close()
         print("Text persistence checks passed: active first typing and marked input, single Undo, immediate/debounced discard, committed empty document and fallback.")
@@ -351,8 +351,8 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         assert(created.count == 1 && created[0].contentView is CountdownView)
         routing.sceneDidChange(startup.scene, store: startup.store)
         assert(created.count == 2 && !created[0].isVisible, "Changing content routes must hide the old panel first")
-        assert((created[1].contentView as? SceneDisplayView)?.scene == startup.scene)
-        let display = InvalidationObservingSceneView(scene: startup.scene, store: startup.store)
+        assert((created[1].contentView as? SceneDisplayView)?.content == ScenePresentationController(store: startup.store).content(for: startup.scene))
+        let display = InvalidationObservingSceneView(content: ScenePresentationController(store: startup.store).content(for: startup.scene))
         created[1].contentView = display
         let clean = display.invalidations
         for tick in 1...3 {
@@ -373,9 +373,9 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
                "AppKit display requests must survive countdown refresh")
         let beforeEdit = display.invalidations
         var changed = startup.scene
-        changed.elements = [SceneElement(kind: .text, frame: CGRect(x: 5, y: 5, width: 90, height: 30), text: "Live scene")]
+        changed.elements = [SceneElementModel(kind: .text, frame: CGRect(x: 5, y: 5, width: 90, height: 30), text: "Live scene")]
         routing.sceneDidChange(changed, store: startup.store)
-        assert(created.count == 2 && display.scene == changed && display.invalidations > beforeEdit)
+        assert(created.count == 2 && display.content == ScenePresentationController(store: startup.store).content(for: changed) && display.invalidations > beforeEdit)
         routing.sceneDidChange(startup.scene, store: startup.store)
         assert(created[1].contentView is SceneDisplayView, "Empty committed content cannot restore countdown fallback")
         assert(!created[1].canBecomeKey && !created[1].canBecomeMain && created[1].ignoresMouseEvents)

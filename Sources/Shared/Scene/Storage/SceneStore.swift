@@ -41,7 +41,7 @@ final class SceneStore {
         }
     }
 
-    func load() throws -> EditorScene? {
+    func load() throws -> EditorSceneModel? {
         let data: Data
         do {
             data = try Data(contentsOf: documentURL)
@@ -55,7 +55,7 @@ final class SceneStore {
             throw SceneError.storage("Не удалось прочитать сохранённый документ.", error)
         }
         do {
-            return try JSONDecoder().decode(EditorScene.self, from: data).validated()
+            return try JSONDecoder().decode(EditorSceneModel.self, from: data).validated()
         } catch let error as SceneError {
             throw error
         } catch {
@@ -63,13 +63,13 @@ final class SceneStore {
         }
     }
 
-    func save(_ scene: EditorScene) throws {
+    func save(_ scene: EditorSceneModel) throws {
         let validated = try scene.validated()
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(validated)
-            _ = try JSONDecoder().decode(EditorScene.self, from: data).validated()
+            _ = try JSONDecoder().decode(EditorSceneModel.self, from: data).validated()
             try data.write(to: documentURL, options: .atomic)
         } catch {
             throw SceneError.storage("Не удалось сохранить документ. Предыдущий файл сохранён.", error)
@@ -77,7 +77,7 @@ final class SceneStore {
     }
 
     /// Remove only the first, provisional typing save that this editor made.
-    func discardProvisionalDocument(matching expected: EditorScene) throws {
+    func discardProvisionalDocument(matching expected: EditorSceneModel) throws {
         guard let current = try load() else { return }
         guard current == expected else {
             throw SceneError.invalid("Документ изменился. Отмена ввода не удалила сохранённый файл.")
@@ -203,7 +203,7 @@ final class SceneStore {
     }
 
     private func imageDescriptor(for assetID: String) -> Int32? {
-        guard EditorScene.isSafeAssetID(assetID), let directory = try? assetsDirectoryDescriptor() else {
+        guard EditorSceneModel.isSafeAssetID(assetID), let directory = try? assetsDirectoryDescriptor() else {
             return nil
         }
         defer { close(directory) }

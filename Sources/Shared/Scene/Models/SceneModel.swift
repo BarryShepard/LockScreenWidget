@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 enum SceneElementKind: String, Codable { case text, image }
 
@@ -19,13 +19,9 @@ struct SceneColor: Codable, Equatable {
     var green: Double = 1
     var blue: Double = 1
     var alpha: Double = 1
-
-    var nsColor: NSColor {
-        NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
-    }
 }
 
-struct SceneTextStyle: Codable, Equatable {
+struct SceneTextStyleModel: Codable, Equatable {
     var family = "System"
     /// Indices from ultra light (0) through black (8).
     var weight = 3
@@ -37,24 +33,9 @@ struct SceneTextStyle: Codable, Equatable {
     var horizontalAlignment = 0
     var verticalAlignment = 0
     var color = SceneColor()
-
-    func font(scale: CGFloat) -> NSFont {
-        let weights: [NSFont.Weight] = [.ultraLight, .thin, .light, .regular, .medium, .semibold, .bold, .heavy, .black]
-        let index = min(8, max(0, weight))
-        let pointSize = fontSize.isFinite && fontSize > 0 && scale.isFinite && scale > 0 &&
-            (fontSize * scale).isFinite ? fontSize * scale : 32
-        if family != "System" {
-            let managerWeights = [1, 2, 3, 5, 6, 7, 9, 11, 14]
-            if let font = NSFontManager.shared.font(withFamily: family, traits: [],
-                                                    weight: managerWeights[index], size: pointSize) {
-                return font
-            }
-        }
-        return NSFont.systemFont(ofSize: pointSize, weight: weights[index])
-    }
 }
 
-struct SceneElement: Codable, Equatable, Identifiable {
+struct SceneElementModel: Codable, Equatable, Identifiable {
     var id: UUID
     var kind: SceneElementKind
     var name: String
@@ -65,14 +46,14 @@ struct SceneElement: Codable, Equatable, Identifiable {
     var text: String
     /// Absent in older documents, which retain their explicit frame width.
     var autoTextWidth: Bool? = nil
-    var style: SceneTextStyle
+    var style: SceneTextStyleModel
     var assetID: String?
     /// Image placement in element-local, top-left-origin logical points.
     var imageRect: CGRect?
 
     init(kind: SceneElementKind, frame: CGRect, id: UUID = UUID(), name: String? = nil,
          rotation: Double = 0, cornerRadius: Double = 0, opacity: Double = 1,
-         text: String? = nil, style: SceneTextStyle = SceneTextStyle(),
+         text: String? = nil, style: SceneTextStyleModel = SceneTextStyleModel(),
          assetID: String? = nil, imageRect: CGRect? = nil) {
         self.id = id
         self.kind = kind
@@ -88,19 +69,19 @@ struct SceneElement: Codable, Equatable, Identifiable {
     }
 }
 
-struct EditorScene: Codable, Equatable {
+struct EditorSceneModel: Codable, Equatable {
     static let currentVersion = 1
     var schemaVersion: Int
     var canvasSize: CGSize
-    var elements: [SceneElement]
+    var elements: [SceneElementModel]
 
-    init(canvasSize: CGSize, elements: [SceneElement] = []) {
+    init(canvasSize: CGSize, elements: [SceneElementModel] = []) {
         schemaVersion = Self.currentVersion
         self.canvasSize = canvasSize
         self.elements = elements
     }
 
-    func validated() throws -> EditorScene {
+    func validated() throws -> EditorSceneModel {
         guard schemaVersion == Self.currentVersion else {
             throw SceneError.invalid("Версия документа не поддерживается: \(schemaVersion).")
         }

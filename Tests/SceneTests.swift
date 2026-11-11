@@ -25,7 +25,7 @@ import AppKit
         let targetImage = target.appendingPathComponent(targetID)
         try imageData.write(to: targetImage)
         let targetContents = try files.contentsOfDirectory(atPath: target.path)
-        let scene = EditorScene(canvasSize: CGSize(width: 500, height: 300))
+        let scene = EditorSceneModel(canvasSize: CGSize(width: 500, height: 300))
         let sceneData = try JSONEncoder().encode(scene)
 
         let linkedRoot = root.appendingPathComponent("preexisting-link")
@@ -125,29 +125,29 @@ import AppKit
         expectFailure { _ = try store.importImage(data: Data()) }
         expectFailure { _ = try store.importImage(at: sourceURL) }
 
-        var text = SceneElement(kind: .text, frame: CGRect(x: 20, y: 30, width: 300, height: 100))
+        var text = SceneElementModel(kind: .text, frame: CGRect(x: 20, y: 30, width: 300, height: 100))
         text.text = "Личный экран\nВторая строка"
         text.name = "Заголовок"
         text.rotation = -15.5
         text.cornerRadius = 8
         text.opacity = 0.75
-        text.style = SceneTextStyle(family: "Missing Font For Scene Test", weight: 6, fontSize: 42,
+        text.style = SceneTextStyleModel(family: "Missing Font For Scene Test", weight: 6, fontSize: 42,
                                     lineHeight: 58, letterSpacing: -2.5,
                                     horizontalAlignment: 2, verticalAlignment: 1,
                                     color: SceneColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 0.8))
-        var image = SceneElement(kind: .image, frame: CGRect(x: -10, y: 220, width: 200, height: 150),
+        var image = SceneElementModel(kind: .image, frame: CGRect(x: -10, y: 220, width: 200, height: 150),
                                  assetID: assetID, imageRect: CGRect(x: -30, y: 0, width: 300, height: 150))
-        var secondText = SceneElement(kind: .text, frame: CGRect(x: 70, y: 450, width: 100, height: 60))
+        var secondText = SceneElementModel(kind: .text, frame: CGRect(x: 70, y: 450, width: 100, height: 60))
         secondText.style.fontSize = 18
-        let scene = EditorScene(canvasSize: CGSize(width: 1512, height: 982), elements: [text, image, secondText])
+        let scene = EditorSceneModel(canvasSize: CGSize(width: 1512, height: 982), elements: [text, image, secondText])
         try store.save(scene)
         check(try store.load() == scene, "Geometry, text style, order, and image references must round trip")
         let reopened = try SceneStore(directory: directory)
         check(try reopened.load() == scene)
         assert(reopened.image(for: assetID)?.isValid == true)
-        assert(abs(text.style.font(scale: 0.5).pointSize - 21) < 0.001)
+        assert(abs(SceneTextLayout.font(text.style, scale: 0.5).pointSize - 21) < 0.001)
         assert(text.style.family == "Missing Font For Scene Test", "Font fallback must preserve the stored family")
-        let color = text.style.color.nsColor.usingColorSpace(.sRGB)!
+        let color = SceneTextLayout.color(text.style.color).usingColorSpace(.sRGB)!
         assert(abs(color.redComponent - 0.2) < 0.001 && abs(color.alphaComponent - 0.8) < 0.001)
         assert(scene.elements[2].style.fontSize == 18, "Block styles must remain independent")
 
@@ -161,7 +161,7 @@ import AppKit
         assert(store.imageURL(for: linkID) == nil, "Asset resolution must not follow symbolic links")
         assert(store.imageURL(for: "missing-image") == nil)
         image.assetID = "missing-image"
-        let missingImageScene = EditorScene(canvasSize: scene.canvasSize, elements: [image])
+        let missingImageScene = EditorSceneModel(canvasSize: scene.canvasSize, elements: [image])
         try store.save(missingImageScene)
         check(try store.load() == missingImageScene, "Missing assets must remain representable")
         assert(store.image(for: assetID)?.isValid == true, "Saving must retain old assets for Undo")
@@ -169,7 +169,7 @@ import AppKit
 
         let documentURL = directory.appendingPathComponent("scene.json")
         let savedBytes = try Data(contentsOf: documentURL)
-        func reject(_ edit: (inout EditorScene) -> Void) throws {
+        func reject(_ edit: (inout EditorSceneModel) -> Void) throws {
             var invalid = scene
             edit(&invalid)
             expectFailure { try store.save(invalid) }

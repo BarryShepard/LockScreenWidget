@@ -343,11 +343,11 @@ Cmd + перетаскивание края или угла фото меняе�
 
 - [Текущее приложение и сборка](../README.md).
 - [Зафиксированная ручная проверка блокировки](native-mvp-verification.md).
-- `Sources/Models/EditorSettingsModel.swift` и `EditorSettingsStorage.swift`: совместимый формат настроек исходного отсчёта.
-- `Sources/Views/CountdownView.swift` и `Sources/Controllers/EditorWindowController.swift`: исходный редактор отсчёта после MVC-рефакторинга.
-- `Sources/SceneModel.swift` и `SceneStore.swift`: произвольная сцена и собственные ресурсы изображений.
-- `Sources/SceneCanvasView.swift`, `SceneInspectorView.swift`, `SceneEditorWindowController.swift`: нативный редактор новой сцены.
-- `Sources/SceneRenderer.swift`: общая отрисовка сцены в редакторе и прозрачной панели.
+- `Sources/Features/Countdown/Models/EditorSettingsModel.swift` и `EditorSettingsStorage.swift` задают совместимый формат настроек исходного отсчёта.
+- `Sources/Features/Countdown/Views/CountdownView.swift` и `Sources/Features/Countdown/Controllers/EditorWindowController.swift` реализуют исходный редактор отсчёта после MVC-рефакторинга.
+- `Sources/Shared/Scene/Models/SceneModel.swift` и `Sources/Shared/Scene/Storage/SceneStore.swift` описывают произвольную сцену и хранят собственные ресурсы изображений.
+- `Sources/Features/SceneEditor/Views/SceneCanvasView.swift`, `SceneInspectorView.swift` и `Sources/Features/SceneEditor/Controllers/SceneEditorWindowController.swift` реализуют нативный редактор новой сцены.
+- `Sources/Shared/Scene/Rendering/SceneRenderer.swift` отвечает за общую отрисовку сцены в редакторе и прозрачной панели.
 - `Sources/Infrastructure/LockScreenSpace.swift`: механизм показа поверх блокировки.
 
 Прототипы из чата — материалы исследования взаимодействий. В случае расхождения с последними требованиями пользователя и этой спецификацией их поведение не является обязательным для приложения.

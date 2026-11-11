@@ -2,8 +2,10 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
-    private let state: SceneEditingState
+    private let state: SceneEditingStateModel
     private let store: SceneStore
+    private let canvasController: SceneCanvasController
+    private let inspectorController: SceneInspectorController
     private let canvas: SceneCanvasView
     private let inspector: SceneInspectorView
     private let status = NSTextField(labelWithString: "Локальная композиция")
@@ -14,18 +16,22 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     private var pendingSave: DispatchWorkItem?
     // Typing can save a provisional scene before the editing session commits.
     private var hasCommittedDocument: Bool
-    private var desiredDocument: EditorScene?
-    private var savedDocument: EditorScene?
-    var scene: EditorScene { state.scene }
-    var onSceneChange: ((EditorScene?) -> Void)?
+    private var desiredDocument: EditorSceneModel?
+    private var savedDocument: EditorSceneModel?
+    var scene: EditorSceneModel { state.scene }
+    var canUndo: Bool { state.canUndo }
+    var onSceneChange: ((EditorSceneModel?) -> Void)?
     var onRevealLegacy: (() -> Void)?
 
-    init(scene: EditorScene, hasSavedScene: Bool, store: SceneStore) {
+    init(scene: EditorSceneModel, hasSavedScene: Bool, store: SceneStore) {
         hasCommittedDocument = hasSavedScene
         savedDocument = hasSavedScene ? scene : nil
         desiredDocument = savedDocument
-        self.store = store; state = SceneEditingState(scene)
-        canvas = SceneCanvasView(state: state, store: store); inspector = SceneInspectorView(state: state)
+        self.store = store; state = SceneEditingStateModel(scene)
+        canvasController = SceneCanvasController(state: state, store: store)
+        canvas = canvasController.view
+        inspector = SceneInspectorView(frame: .zero)
+        inspectorController = SceneInspectorController(state: state, view: inspector)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 710),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
@@ -33,16 +39,16 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false; window.delegate = self; window.center()
         buildWindow(window)
         state.onUpdate = { [weak self] in self?.update($0) }
-        canvas.onPickReplacement = { [weak self] id in self?.pick(.replace(id)) }
-        canvas.onPaste = { [weak self] board, target in self?.paste(board, drop: target) ?? false }
-        canvas.onRestoreTypedScene = { [weak self] in
+        canvasController.onPickReplacement = { [weak self] id in self?.pick(.replace(id)) }
+        canvasController.onPaste = { [weak self] board, target in self?.paste(board, drop: target) ?? false }
+        canvasController.onRestoreTypedScene = { [weak self] in
             guard let self else { return }
             self.desiredDocument = self.hasCommittedDocument ? self.scene : nil
             self.saveIfNeeded()
         }
-        inspector.onFocus = { [weak self] in self?.canvas.focus() }
-        inspector.onError = { [weak self] in self?.showError($0) }
-        canvas.onError = inspector.onError
+        inspectorController.onFocus = { [weak self] in self?.canvas.focus() }
+        inspectorController.onError = { [weak self] in self?.showError($0) }
+        canvasController.onError = inspectorController.onError
         update(.selection)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -51,7 +57,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         blocked = message; pendingSave?.cancel(); pendingSave = nil; showError(message)
     }
     func flush() { // Also useful from applicationWillTerminate, when there is no windowWillClose.
-        window?.makeFirstResponder(nil); canvas.finishText(); saveIfNeeded()
+        window?.makeFirstResponder(nil); canvasController.finishText(); saveIfNeeded()
     }
     func windowWillClose(_ notification: Notification) { flush() }
 
@@ -90,11 +96,11 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
             status.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8)
         ])
     }
-    private func finishFields() { window?.makeFirstResponder(canvas); canvas.finishText() }
+    private func finishFields() { window?.makeFirstResponder(canvas); canvasController.finishText() }
     @objc private func addSelected(_ sender: NSPopUpButton) {
         finishFields()
-        if sender.indexOfSelectedItem == 1 { canvas.createCenteredText() }
-        if sender.indexOfSelectedItem == 2 { pick(.add(state.insertionPoint)) }
+        if sender.indexOfSelectedItem == 1 { canvasController.createCenteredText() }
+        if sender.indexOfSelectedItem == 2 { pick(.add(canvasController.images.insertionPoint)) }
     }
     @objc private func undoClicked() { finishFields(); state.undo() }
     @objc private func redoClicked() { finishFields(); state.redo() }
@@ -104,8 +110,8 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         clock.isEnabled = canvas.guides; canvas.focus()
     }
     private func update(_ kind: SceneUpdate) {
-        canvas.needsDisplay = true; inspector.refresh()
-        undoButton.isEnabled = state.canUndo; redoButton.isEnabled = state.canRedo
+        canvasController.refresh(); inspectorController.refresh()
+        undoButton.isEnabled = canUndo; redoButton.isEnabled = state.canRedo
         switch kind {
         case .selection, .preview: break
         case .typing:
@@ -154,16 +160,16 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     }
     private func importImages(_ inputs: [SceneImageInput], into target: SceneImageDestination) throws {
         if let blocked = blocked { throw SceneError.invalid(blocked) }
-        try state.importImages(inputs, at: target, store: store)
+        try canvasController.images.importImages(inputs, at: target)
     }
     private func paste(_ board: NSPasteboard, drop: SceneImageDestination?) -> Bool {
-        let target = drop ?? state.pasteImageDestination
+        let target = drop ?? canvasController.images.pasteImageDestination
         do {
             switch try SceneTransfer.read(board, allowLayers: drop == nil) {
             case .layers(let copied): state.insertCopies(copied)
             case .images(let images): try importImages(images, into: target)
             case .text(let string) where drop == nil:
-                var e = SceneElement(kind: .text, frame: CGRect(origin: state.insertionPoint,
+                var e = SceneElementModel(kind: .text, frame: CGRect(origin: canvasController.images.insertionPoint,
                                      size: CGSize(width: max(60,scene.canvasSize.width*0.45),height: 1)), text: string)
                 SceneTextLayout.fit(&e)
                 state.change { $0.scene.elements.append(e); $0.selection = [e.id] }

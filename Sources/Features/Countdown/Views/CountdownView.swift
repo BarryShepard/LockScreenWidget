@@ -5,9 +5,9 @@ final class CountdownView: NSView {
         let text: String
         let attributes: [NSAttributedString.Key: Any]
         let frame: NSRect
+        let verticalAlignment: CGFloat
     }
-    private(set) var content = CountdownDisplayModel()
-    private(set) var settings = EditorSettingsModel()
+    private(set) var presentation = CountdownPresentation(blocks: [])
     private(set) var selectedIndices: Set<Int> = []
     private var marquee: NSRect?
     let isOverlay: Bool
@@ -27,10 +27,9 @@ final class CountdownView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { !isOverlay }
 
-    func render(content: CountdownDisplayModel, settings: EditorSettingsModel,
+    func render(_ presentation: CountdownPresentation,
                 selectedIndices: Set<Int> = [], marquee: NSRect? = nil) {
-        self.content = content
-        self.settings = settings
+        self.presentation = presentation
         self.selectedIndices = selectedIndices
         self.marquee = marquee
         needsDisplay = true
@@ -76,13 +75,12 @@ final class CountdownView: NSView {
             NSBezierPath(rect: canvasFrame(in: bounds)).stroke()
         }
         let runs = layout(in: bounds)
-        for (index, run) in runs.enumerated() {
+        for run in runs {
             let measuredHeight = textHeight(run.text, attributes: run.attributes, width: run.frame.width)
             let freeHeight = max(0, run.frame.height - measuredHeight)
-            let alignment = settings.typography[index].verticalAlignment
             var textFrame = run.frame
-            textFrame.origin.y += freeHeight * CGFloat(alignment) / 2
-            textFrame.size.height -= freeHeight * CGFloat(alignment) / 2
+            textFrame.origin.y += freeHeight * run.verticalAlignment
+            textFrame.size.height -= freeHeight * run.verticalAlignment
             (run.text as NSString).draw(with: textFrame, options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: run.attributes)
         }
         if !isOverlay {
@@ -106,23 +104,16 @@ final class CountdownView: NSView {
         screen
     }
 
-    func layout(in bounds: NSRect, settings suppliedSettings: EditorSettingsModel? = nil) -> [TextRun] {
-        let settings = suppliedSettings ?? self.settings
-        let offsets = settings.offsets
+    func layout(in bounds: NSRect, presentation suppliedPresentation: CountdownPresentation? = nil) -> [TextRun] {
+        let presentation = suppliedPresentation ?? self.presentation
         let area = canvasFrame(in: bounds)
         let scale = min(area.width / 1512, area.height / 982)
         let availableWidth = max(1, area.width * 0.88 - 32 * scale)
-        let texts = [content.title, content.counter, content.information]
         var runs: [TextRun] = []
         var defaultY: CGFloat = 10 * scale
-        for index in visibleBlockIndices(in: settings) {
-            var typography = settings.typography[index]
-            if index == 1, !content.usesCountdown {
-                // A period is a label, never a fabricated ticking deadline.
-                typography.size = min(typography.size, 42)
-            }
-            let attributes = style(typography, scale: scale, digits: index == 1 && content.usesCountdown)
-            let text = texts[index]
+        for (index, block) in presentation.blocks.enumerated() {
+            let attributes = style(block.typography, scale: scale)
+            let text = block.text
             let measuredWidth = (text as NSString).size(withAttributes: attributes).width
             let preferredWidth: CGFloat = index == 0 ? 740 : (index == 1 ? 620 : 810)
             let width = min(availableWidth, max(preferredWidth * scale, ceil(measuredWidth) + 4))
@@ -133,26 +124,27 @@ final class CountdownView: NSView {
             let baseY = defaultY
             if index == 0 { defaultY += textHeight }
             else if index == 1 { defaultY += height + 24 * scale }
-            var frame = NSRect(x: area.midX - width / 2 + offsets[index * 2] * area.width,
-                               y: area.minY + area.height * 0.065 + baseY + offsets[index * 2 + 1] * area.height,
+            var frame = NSRect(x: area.midX - width / 2 + block.offset.x * area.width,
+                               y: area.minY + area.height * 0.065 + baseY + block.offset.y * area.height,
                                width: width, height: height)
             frame.origin.x = min(max(area.minX, frame.minX), max(area.minX, area.maxX - frame.width))
             frame.origin.y = min(max(area.minY, frame.minY), max(area.minY, area.maxY - frame.height))
-            runs.append(TextRun(text: text, attributes: attributes, frame: frame))
+            runs.append(TextRun(text: text, attributes: attributes, frame: frame,
+                                verticalAlignment: block.typography.verticalAlignment))
         }
         return runs
     }
 
-    private func style(_ typography: BlockTypographyModel, scale: CGFloat, digits: Bool) -> [NSAttributedString.Key: Any] {
+    private func style(_ typography: TypographyPresentation, scale: CGFloat) -> [NSAttributedString.Key: Any] {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = [NSTextAlignment.left, .center, .right][typography.alignment]
+        paragraph.alignment = typography.alignment
         if typography.lineHeight > 0 {
             paragraph.minimumLineHeight = typography.lineHeight * scale
             paragraph.maximumLineHeight = typography.lineHeight * scale
         }
-        return [.font: makeTypographyFont(typography, scale: scale, digits: digits),
+        return [.font: makeTypographyFont(typography, scale: scale),
                 .foregroundColor: NSColor.white.withAlphaComponent(0.60),
-                .kern: typography.spacing / 100 * typography.size * scale, .paragraphStyle: paragraph]
+                .kern: typography.letterSpacing * scale, .paragraphStyle: paragraph]
     }
 
     private func textHeight(_ text: String, attributes: [NSAttributedString.Key: Any], width: CGFloat) -> CGFloat {
