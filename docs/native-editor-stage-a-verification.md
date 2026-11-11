@@ -84,4 +84,14 @@ This requires the user's authorized manual workflow. No automated task locks the
 - [ ] Unlock normally; confirm the elevated panel disappears. Repeat with a saved empty scene, disabled display and quit cleanup.
 - [ ] Separately check sleep/wake, an interrupted panel test and multiple displays on the actual target system.
 
-Notes/timers and mouse-driven resize, crop and rotation remain outside Stage A. Asset copies are append-only for Undo safety; the current app does not perform asset garbage collection.
+Notes and timers remain outside Stage A. Direct resize, crop and rotation have since been implemented; their native manual verification remains open. Asset copies are append-only for Undo safety; the current app does not perform asset garbage collection.
+
+
+## Проверка прямых преобразований
+
+- [ ] Проверить края и углы повёрнутого элемента, вращение снаружи углов, Shift и запрет непропорционального масштаба группы.
+- [ ] Проверить Cmd-обрезку всех сторон и углов повёрнутого фото, возврат скрытой области, Undo/Redo и Escape.
+- [ ] Сохранить растянутый текст, открыть снова и сравнить его отображение с вводом, включая переносы, курсор и системный метод ввода; изменить ширину боковой границей при вводе.
+- [ ] Проверить отсутствие скачка при захвате рамки и корректность курсоров на реальном дисплее.
+
+Автотесты не заменяют эти действия и проверку защищённой блокировки.

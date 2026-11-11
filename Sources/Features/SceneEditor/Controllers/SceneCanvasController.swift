@@ -19,6 +19,11 @@ final class SceneCanvasController {
     private var original: SceneSnapshot?, moveBase: SceneSnapshot?
     private var downID: UUID?, shiftDown = false, optionDown = false, dragging = false
     private var axisX: Bool?
+    private var transform: SceneTransformController.Target?
+    private var cropGesture = false
+    private var widthStart: SceneSnapshot?
+    private var widthPoint = CGPoint.zero
+    private var groupRestriction = false
     private var drop: SceneImageDestination?
 
     init(state: SceneEditingStateModel, store: SceneStore) {
@@ -36,6 +41,7 @@ final class SceneCanvasController {
             self.refresh()
             return handled
         }
+        view.onTextWidthGesture = { [weak self] event, side, phase in self?.textWidthGesture(event, side: side, phase: phase) }
         view.onTextChange = { [weak self] text in self?.textChanged(text) }
         view.onLayout = { [weak self] in self?.refreshText() }
         view.onDragUpdate = { [weak self] point in
@@ -68,6 +74,7 @@ final class SceneCanvasController {
         presentation.selectionOutlines = selected.map(SceneGeometry.corners)
         presentation.selectionBounds = selected.count > 1 ? SceneGeometry.bounds(selected) : nil
         presentation.marquee = original != nil && downID == nil && dragging ? dragRect : nil
+        presentation.handles = editingID == nil && !textTool ? SceneTransformController.targets(selected, scale: view.viewport.scale).map { SceneCanvasHandle(point: $0.point, rotation: $0.rotation) } : []
         presentation.textTool = textTool
         presentation.editingID = editingID
         switch drop {
@@ -77,7 +84,7 @@ final class SceneCanvasController {
             presentation.badge = "Заменить фото"
             presentation.dropOutline = state.scene.elements.first { $0.id == id }.map(SceneGeometry.corners)
         case .none:
-            presentation.badge = textTool ? "Щёлкните или протяните рамку для текста" : nil
+            presentation.badge = groupRestriction ? "Группа: доступно только пропорциональное масштабирование" : (textTool ? "Щёлкните или протяните рамку для текста" : nil)
         }
         view.render(presentation)
         refreshText()
@@ -87,6 +94,11 @@ final class SceneCanvasController {
         finishText(); view.focus()
         let point = view.scenePoint(event.locationInWindow)
         guard view.contains(event.locationInWindow) else { state.select([]); return }
+        if !textTool, let target = SceneTransformController.hit(point, elements: state.selected, scale: view.viewport.scale) {
+            dragStart = point; dragCurrent = point; original = state.value
+            transform = target; cropGesture = event.modifierFlags.contains(.command) && state.selected.count == 1 && state.selected[0].kind == .image && !target.rotation
+            dragging = false; return
+        }
         let hit = textTool ? nil : state.hit(point)
         if event.clickCount == 2, let e = hit {
             state.select([e.id])
@@ -107,6 +119,12 @@ final class SceneCanvasController {
         var dx = dragCurrent.x - dragStart.x, dy = dragCurrent.y - dragStart.y
         guard dragging || hypot(dx,dy)*view.viewport.scale >= 3 else { return }
         dragging = true
+        if let target = transform {
+            let stretch = event.modifierFlags.contains(.shift)
+            state.preview(SceneTransformController.applying(original, target: target, from: dragStart, to: dragCurrent, stretch: stretch, crop: cropGesture))
+            groupRestriction = stretch && original.selection.count > 1 && !target.rotation
+            return
+        }
         if textTool { return }
         if let downID = downID {
             guard state.selection.contains(downID) || moveBase != nil else { return }
@@ -126,7 +144,8 @@ final class SceneCanvasController {
         dragCurrent = view.scenePoint(event.locationInWindow)
         let rect = dragRect, dragged = dragging
         defer { clearGesture() }
-        if textTool {
+        if transform != nil { state.finish(from: original) }
+        else if textTool {
             beginNewText(at: dragged ? rect.origin : dragStart, width: dragged ? max(12, rect.width) : nil)
         } else if moveBase != nil { state.finish(from: original) }
         else if !dragged, let id = downID {
@@ -135,6 +154,9 @@ final class SceneCanvasController {
     }
     private func clearGesture() {
         original = nil
+        transform = nil
+        cropGesture = false
+        groupRestriction = false
         moveBase = nil
         downID = nil
         axisX = nil
@@ -156,6 +178,7 @@ final class SceneCanvasController {
 
     private func inputPresentation(_ element: SceneElementModel) -> SceneTextInputPresentation {
         SceneTextInputPresentation(frame: element.frame, rotation: element.rotation, opacity: element.opacity,
+                                   scaleX: element.textScaleX ?? 1, scaleY: element.textScaleY ?? 1,
                                    yOffset: SceneTextLayout.yOffset(element),
                                    attributes: SceneTextLayout.attributes(element.style, scale: view.viewport.scale),
                                    color: SceneTextLayout.color(element.style.color))
@@ -172,6 +195,35 @@ final class SceneCanvasController {
     private func refreshText() {
         guard let element = state.scene.elements.first(where: { $0.id == editingID }) else { return }
         view.updateText(inputPresentation(element))
+    }
+    private func textWidthGesture(_ event: NSEvent, side: Int, phase: Int) {
+        guard let id = editingID else { return }
+        if phase == 0 {
+            if let initial = initialText { state.finish(from: initial) }
+            initialText = state.value; typed = false
+            widthStart = state.value; widthPoint = view.scenePoint(event.locationInWindow)
+            return
+        }
+        guard let start = widthStart, let index = start.scene.elements.firstIndex(where: { $0.id == id }) else { return }
+        let element = start.scene.elements[index]
+        let point = view.scenePoint(event.locationInWindow)
+        let delta = SceneTransformController.rotate(CGPoint(x: point.x-widthPoint.x, y: point.y-widthPoint.y), -element.rotation * .pi/180).x
+        if abs(delta) < 0.0001 {
+            state.preview(start)
+            if phase == 2 { widthStart = nil; initialText = state.value }
+            refresh(); return
+        }
+        let width = max(12, element.frame.width + CGFloat(side)*delta)
+        let shift = SceneTransformController.rotate(CGPoint(x: CGFloat(side)*(width-element.frame.width)/2, y: 0), element.rotation * .pi/180)
+        var next = start
+        next.scene.elements[index].frame.size.width = width
+        next.scene.elements[index].frame.origin.x += shift.x - (width-element.frame.width)/2
+        next.scene.elements[index].frame.origin.y += shift.y
+        next.scene.elements[index].autoTextWidth = false
+        SceneTextLayout.fit(&next.scene.elements[index], minimumHeight: 1)
+        state.preview(next)
+        if phase == 2 { state.finish(from: start); initialText = state.value; widthStart = nil }
+        refresh()
     }
     private func textChanged(_ text: String) {
         guard let index = state.scene.elements.firstIndex(where: { $0.id == editingID }) else { return }

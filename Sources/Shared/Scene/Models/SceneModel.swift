@@ -46,6 +46,9 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
     var text: String
     /// Absent in older documents, which retain their explicit frame width.
     var autoTextWidth: Bool? = nil
+    /// Optional display transform; absent in older documents means identity.
+    var textScaleX: Double? = nil
+    var textScaleY: Double? = nil
     var style: SceneTextStyleModel
     var assetID: String?
     /// Image placement in element-local, top-left-origin logical points.
@@ -96,7 +99,8 @@ struct EditorSceneModel: Codable, Equatable {
             guard Self.validRect(element.frame), element.rotation.isFinite,
                   element.cornerRadius.isFinite, element.cornerRadius >= 0,
                   element.opacity.isFinite, (0...1).contains(element.opacity),
-                  element.imageRect.map(Self.validRect) ?? true else {
+                  element.imageRect.map(Self.validRect) ?? true,
+                  [element.textScaleX, element.textScaleY].allSatisfy({ $0.map { $0.isFinite && $0 > 0 } ?? true }) else {
                 throw SceneError.invalid("У элемента «\(element.name)» некорректные размеры или параметры отображения.")
             }
             let style = element.style

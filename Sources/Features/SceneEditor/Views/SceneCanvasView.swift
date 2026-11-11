@@ -1,6 +1,20 @@
 import AppKit
 
 private final class SceneInputView: NSTextView {
+    var onWidthGesture: ((NSEvent, Int, Int) -> Void)?
+    private var widthSide = 0
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let hit: CGFloat = 6
+        widthSide = p.x <= bounds.minX + hit ? -1 : (p.x >= bounds.maxX - hit ? 1 : 0)
+        if widthSide != 0 && !hasMarkedText() { onWidthGesture?(event, widthSide, 0) } else { widthSide = 0; super.mouseDown(with: event) }
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if widthSide != 0 { onWidthGesture?(event, widthSide, 1) } else { super.mouseDragged(with: event) }
+    }
+    override func mouseUp(with event: NSEvent) {
+        if widthSide != 0 { onWidthGesture?(event, widthSide, 2); widthSide = 0 } else { super.mouseUp(with: event) }
+    }
     private let localHistory = UndoManager()
     override var undoManager: UndoManager? { localHistory }
     @objc func undo(_ sender: Any?) { localHistory.undo() }
@@ -12,9 +26,15 @@ enum SceneCanvasAction {
     case copy, cut, paste, duplicate, undo, redo, forward, backward, front, back
 }
 
+struct SceneCanvasHandle: Equatable {
+    let point: CGPoint
+    let rotation: Bool
+}
+
 struct SceneCanvasPresentation: Equatable {
     var content = SceneRenderContent(canvasSize: CGSize(width: 1, height: 1), elements: [])
     var selectionOutlines: [[CGPoint]] = []
+    var handles: [SceneCanvasHandle] = []
     var selectionBounds: CGRect?
     var marquee: CGRect?
     var dropOutline: [CGPoint]?
@@ -27,6 +47,7 @@ struct SceneTextInputPresentation {
     let frame: CGRect
     let rotation: Double
     let opacity: Double
+    let scaleX: CGFloat, scaleY: CGFloat
     let yOffset: CGFloat
     let attributes: [NSAttributedString.Key: Any]
     let color: NSColor
@@ -39,6 +60,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     var onMouseUp: ((NSEvent) -> Void)?
     var onKeyDown: ((NSEvent) -> Bool)?
     var onTextChange: ((String) -> Void)?
+    var onTextWidthGesture: ((NSEvent, Int, Int) -> Void)?
     var onLayout: (() -> Void)?
     var onDragUpdate: ((CGPoint?) -> Bool)?
     var onDrop: ((NSPasteboard, CGPoint) -> Bool)?
@@ -65,7 +87,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
 
     func render(_ presentation: SceneCanvasPresentation) {
         guard presentation != self.presentation else { return }
-        let cursorChanged = self.presentation.textTool != presentation.textTool
+        let cursorChanged = self.presentation.textTool != presentation.textTool || self.presentation.handles != presentation.handles
         self.presentation = presentation
         if cursorChanged { window?.invalidateCursorRects(for: self) }
         needsDisplay = true
@@ -73,7 +95,12 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     override func resetCursorRects() {
         super.resetCursorRects()
         if presentation.textTool { addCursorRect(viewport.rect, cursor: .crosshair) }
+        for target in presentation.handles {
+            let p = viewport.viewPoint(target.point)
+            addCursorRect(CGRect(x: p.x-7, y: p.y-7, width: 14, height: 14), cursor: target.rotation ? .crosshair : .openHand)
+        }
     }
+    func showTransformRestriction() { presentation.badge = "Группа: доступно только пропорциональное масштабирование"; needsDisplay = true }
     func focus() { window?.makeFirstResponder(self) }
     func createCenteredText() { onAction?(.createText) }
     func editSelection() { onAction?(.editSelection) }
@@ -96,6 +123,10 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         if let bounds = presentation.selectionBounds {
             NSColor.controlAccentColor.setStroke()
             NSBezierPath(rect: viewport.viewRect(bounds)).stroke()
+        }
+        for handle in presentation.handles where !handle.rotation {
+            let p = viewport.viewPoint(handle.point), r = CGRect(x: p.x-3.5, y: p.y-3.5, width: 7, height: 7)
+            NSColor.white.setFill(); r.fill(); NSColor.controlAccentColor.setStroke(); r.frame()
         }
         if let marquee = presentation.marquee {
             let box = viewport.viewRect(marquee)
@@ -150,6 +181,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         field.textContainer?.containerSize.height = CGFloat.greatestFiniteMagnitude
 
         field.string = text
+        field.onWidthGesture = { [weak self] event, side, phase in self?.onTextWidthGesture?(event, side, phase) }
         field.delegate = self
         field.textStorage?.setAttributes(presentation.attributes, range: NSRange(location: 0, length: (text as NSString).length))
         field.typingAttributes = presentation.attributes
@@ -174,6 +206,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         }
         input.frameCenterRotation = 0
         input.frame = viewport.viewRect(presentation.frame)
+        input.bounds = CGRect(x: 0, y: 0, width: input.frame.width / presentation.scaleX, height: input.frame.height / presentation.scaleY)
         input.textContainerInset = CGSize(width: 0, height: presentation.yOffset * viewport.scale)
         input.frameCenterRotation = -presentation.rotation
         input.alphaValue = max(0.2, presentation.opacity)

@@ -30,14 +30,14 @@ struct SceneRenderElement: Equatable {
 }
 
 enum SceneRenderDrawing: Equatable {
-    case text(NSAttributedString, frame: CGRect)
+    case text(NSAttributedString, frame: CGRect, scaleX: CGFloat, scaleY: CGFloat)
     case image(NSImage, frame: CGRect)
     case missingImage(label: NSAttributedString, frame: CGRect, background: NSColor)
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case let (.text(left, leftFrame), .text(right, rightFrame)):
-            return leftFrame == rightFrame && left.isEqual(to: right)
+        case let (.text(left, leftFrame, lx, ly), .text(right, rightFrame, rx, ry)):
+            return leftFrame == rightFrame && lx == rx && ly == ry && left.isEqual(to: right)
         case let (.image(left, leftFrame), .image(right, rightFrame)):
             // The presenter reuses the decoded image while it is cached.
             return leftFrame == rightFrame && left === right
@@ -65,7 +65,8 @@ final class SceneRenderer {
             NSBezierPath(roundedRect: box, xRadius: radius, yRadius: radius).addClip()
             ctx.setAlpha(e.opacity); ctx.beginTransparencyLayer(auxiliaryInfo: nil)
             switch e.drawing {
-            case let .text(text, frame):
+            case let .text(text, frame, sx, sy):
+                ctx.scaleBy(x: sx, y: sy)
                 text.draw(with: frame, options: [.usesLineFragmentOrigin, .usesFontLeading])
             case let .image(image, frame):
                 image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1,

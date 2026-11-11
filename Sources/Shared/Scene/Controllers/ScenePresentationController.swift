@@ -22,7 +22,8 @@ final class ScenePresentationController {
                 let y = SceneTextLayout.yOffset(element)
                 drawing = .text(NSAttributedString(string: element.text,
                     attributes: SceneTextLayout.attributes(element.style)),
-                    frame: CGRect(x: 0, y: y, width: box.width, height: max(1, box.height-y)))
+                    frame: CGRect(x: 0, y: y, width: box.width / (element.textScaleX ?? 1), height: max(1, box.height / (element.textScaleY ?? 1)-y)),
+                    scaleX: element.textScaleX ?? 1, scaleY: element.textScaleY ?? 1)
             case .image:
                 if let id = element.assetID, let image = image(id) {
                     drawing = .image(image, frame: element.imageRect ?? box)

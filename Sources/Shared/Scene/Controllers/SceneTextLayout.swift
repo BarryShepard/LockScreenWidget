@@ -41,12 +41,14 @@ enum SceneTextLayout {
 
     static func fit(_ e: inout SceneElementModel, minimumHeight: CGFloat = 1) {
         let auto = e.autoTextWidth == true
-        if auto { e.frame.size.width = max(28, measure(e, width: .greatestFiniteMagnitude).width + 2) }
-        e.frame.size.height = max(minimumHeight, measure(e, width: e.frame.width).height)
+        let sx = e.textScaleX ?? 1, sy = e.textScaleY ?? 1
+        if auto { e.frame.size.width = max(28 * sx, (measure(e, width: .greatestFiniteMagnitude).width + 2) * sx) }
+        e.frame.size.height = max(minimumHeight, measure(e, width: e.frame.width / sx).height * sy)
     }
 
     static func yOffset(_ e: SceneElementModel) -> CGFloat {
-        let free = max(0, e.frame.height - measure(e, width: e.frame.width).height)
+        let sy = e.textScaleY ?? 1
+        let free = max(0, e.frame.height / sy - measure(e, width: e.frame.width / (e.textScaleX ?? 1)).height)
         return [0, free/2, free][e.style.verticalAlignment]
     }
 }

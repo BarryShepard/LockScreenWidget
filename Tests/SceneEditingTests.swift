@@ -35,6 +35,75 @@ import AppKit
         model.deleteSelection(); check(model.selection.isEmpty && model.scene.elements.count == 4, "Delete clears selection")
         model.undo(); check(model.selection.count == 2, "Undo deletion restores selected group")
     }
+    static func transforms() {
+        var photo = SceneElementModel(kind: .image, frame: CGRect(x: 100, y: 100, width: 120, height: 80), rotation: 37,
+                                      assetID: "original.png", imageRect: CGRect(x: -30, y: -20, width: 180, height: 120))
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [photo]))
+        state.select([photo.id]); let original = state.value
+        let targets = SceneTransformController.targets([photo], scale: 1)
+        let corner = targets.first { !$0.rotation && $0.handle.x == 1 && $0.handle.y == 1 }!
+        let grab = CGPoint(x: corner.point.x+3, y: corner.point.y-2)
+        check(SceneTransformController.applying(original, target: corner, from: grab, to: grab, stretch: false, crop: false) == original, "Off-center grab does not jump")
+        let delta = SceneTransformController.rotate(CGPoint(x: 30, y: 20), 37 * .pi/180)
+        let moved = CGPoint(x: grab.x+delta.x, y: grab.y+delta.y)
+        let resized = SceneTransformController.applying(original, target: corner, from: grab, to: moved, stretch: false, crop: false)
+        let before = SceneGeometry.corners(photo)[0], after = SceneGeometry.corners(resized.scene.elements[0])[0]
+        check(hypot(before.x-after.x, before.y-after.y) < 0.0001, "Opposite rotated corner remains anchored")
+        check(abs(resized.scene.elements[0].frame.width / photo.frame.width - resized.scene.elements[0].frame.height / photo.frame.height) < 0.0001, "Corner resize is proportional")
+        let stretched = SceneTransformController.applying(original, target: corner, from: grab, to: moved, stretch: true, crop: false)
+        check(stretched.scene.elements[0].frame.width > photo.frame.width && stretched.scene.elements[0].frame.height > photo.frame.height, "Shift stretches")
+        state.preview(resized); state.finish(from: original); state.undo(); check(state.value == original && !state.canUndo, "One gesture is one undo")
+        for h in SceneTransformController.handles {
+            let target = targets.first { !$0.rotation && $0.handle == h }!
+            let d = SceneTransformController.rotate(CGPoint(x: CGFloat(h.x)*(-10), y: CGFloat(h.y)*(-8)), 37 * .pi/180)
+            let cropped = SceneTransformController.applying(original, target: target, from: target.point, to: CGPoint(x: target.point.x+d.x, y: target.point.y+d.y), stretch: false, crop: true).scene.elements[0]
+            func imageOrigin(_ e: SceneElementModel) -> CGPoint {
+                let r = e.imageRect!, v = SceneTransformController.rotate(CGPoint(x: r.minX-e.frame.width/2, y: r.minY-e.frame.height/2), e.rotation * .pi/180)
+                return CGPoint(x: e.frame.midX+v.x, y: e.frame.midY+v.y)
+            }
+            let p = imageOrigin(photo), q = imageOrigin(cropped)
+            check(hypot(p.x-q.x, p.y-q.y) < 0.0001 && cropped.assetID == photo.assetID, "Rotated crop preserves source position and asset")
+        }
+        let other = SceneElementModel(kind: .image, frame: CGRect(x: 350, y: 200, width: 70, height: 60), rotation: -20)
+        let groupState = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [photo, other])); groupState.select([photo.id, other.id])
+        let bounds = SceneGeometry.bounds(groupState.selected)!
+        let groupTargets = SceneTransformController.targets(groupState.selected, scale: 1)
+        let groupCorner = groupTargets.first { !$0.rotation && $0.handle.x == 1 && $0.handle.y == 1 }!
+        let groupResized = SceneTransformController.applying(groupState.value, target: groupCorner, from: groupCorner.point, to: CGPoint(x: groupCorner.point.x+40, y: groupCorner.point.y+40), stretch: false, crop: false)
+        check(groupResized.scene.elements[0].rotation == photo.rotation && groupResized.scene.elements[1].rotation == other.rotation, "Group resize preserves rotations")
+        let turn = groupTargets.first { $0.rotation && $0.handle.x == 1 && $0.handle.y == 1 }!
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let turnDelta = CGPoint(x: turn.point.x-center.x, y: turn.point.y-center.y)
+        let rotated = SceneTransformController.applying(groupState.value, target: turn, from: turn.point, to: CGPoint(x: center.x-turnDelta.y, y: center.y+turnDelta.x), stretch: false, crop: false)
+        check(abs(rotated.scene.elements[0].rotation-photo.rotation-90) < 0.0001 && abs(hypot(rotated.scene.elements[0].frame.midX-center.x, rotated.scene.elements[0].frame.midY-center.y)-hypot(photo.frame.midX-center.x, photo.frame.midY-center.y)) < 0.0001, "Group rotation orbits center")
+        let tiny = SceneTransformController.applying(original, target: corner, from: grab, to: CGPoint(x: grab.x-10000, y: grab.y-10000), stretch: true, crop: false).scene.elements[0]
+        check(tiny.frame.width > 0 && tiny.frame.height > 0, "Resize never flips")
+        photo.kind = .text; photo.assetID = nil; photo.imageRect = nil
+        let textState = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [photo])); textState.select([photo.id])
+        let transformed = SceneTransformController.applying(textState.value, target: corner, from: grab, to: moved, stretch: true, crop: false).scene.elements[0]
+        check(transformed.style == photo.style && transformed.textScaleX != nil && transformed.textScaleY != nil, "Text scale is separate from style")
+        let encoded = try! JSONEncoder().encode(transformed)
+        check(try! JSONDecoder().decode(SceneElementModel.self, from: encoded) == transformed, "Text scale round trip")
+        var legacy = try! JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        legacy.removeValue(forKey: "textScaleX"); legacy.removeValue(forKey: "textScaleY")
+        let decoded = try! JSONDecoder().decode(SceneElementModel.self, from: JSONSerialization.data(withJSONObject: legacy))
+        check(decoded.textScaleX == nil && decoded.textScaleY == nil, "Old text has identity scale")
+    }
+    static func transformedTextInput(_ store: SceneStore) {
+        var e = item(100); e.text = "Пример текста"; e.textScaleX = 1.5; e.textScaleY = 2
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [e])); state.select([e.id])
+        let controller = SceneCanvasController(state: state, store: store)
+        let canvas = controller.view
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas; canvas.editSelection()
+        guard let input = canvas.subviews.compactMap({ $0 as? NSTextView }).first else { fatalError("Missing native text input") }
+        check(abs(input.bounds.width * 1.5-input.frame.width) < 0.01 && abs(input.bounds.height * 2-input.frame.height) < 0.01, "Native input uses persisted anisotropic coordinates")
+        check(input.string == e.text && input.selectedRange().location == (e.text as NSString).length, "Scaled input keeps text and insertion point")
+        input.setMarkedText("ж", selectedRange: NSRange(location: 1, length: 0), replacementRange: input.selectedRange())
+        check(input.hasMarkedText() && state.scene.elements[0].text == e.text, "Scaled input preserves marked text until committed")
+        input.unmarkText(); canvas.finishText()
+        withExtendedLifetime(controller) {}
+    }
     static func cancelCanvasDrag(_ store: SceneStore, duplicate: Bool) {
         _ = NSApplication.shared
         let first = item(50), second = item(300)
@@ -470,6 +539,8 @@ import AppKit
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)
         geometryAndHistory()
+        transforms()
+        transformedTextInput(store)
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
         shiftGestures(store)
