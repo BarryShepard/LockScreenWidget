@@ -44,14 +44,14 @@ import AppKit
         let corner = targets.first { !$0.rotation && $0.handle.x == 1 && $0.handle.y == 1 }!
         let grab = CGPoint(x: corner.point.x+3, y: corner.point.y-2)
         check(SceneTransformController.applying(original, target: corner, from: grab, to: grab, stretch: false, crop: false) == original, "Off-center grab does not jump")
-        let delta = SceneTransformController.rotate(CGPoint(x: 30, y: 20), 37 * .pi/180)
+        let delta = SceneTransformController.rotate(CGPoint(x: 30, y: 10), 37 * .pi/180)
         let moved = CGPoint(x: grab.x+delta.x, y: grab.y+delta.y)
         let resized = SceneTransformController.applying(original, target: corner, from: grab, to: moved, stretch: false, crop: false)
         let before = SceneGeometry.corners(photo)[0], after = SceneGeometry.corners(resized.scene.elements[0])[0]
         check(hypot(before.x-after.x, before.y-after.y) < 0.0001, "Opposite rotated corner remains anchored")
         check(abs(resized.scene.elements[0].frame.width / photo.frame.width - resized.scene.elements[0].frame.height / photo.frame.height) < 0.0001, "Corner resize is proportional")
         let stretched = SceneTransformController.applying(original, target: corner, from: grab, to: moved, stretch: true, crop: false)
-        check(stretched.scene.elements[0].frame.width > photo.frame.width && stretched.scene.elements[0].frame.height > photo.frame.height, "Shift stretches")
+        check(abs(stretched.scene.elements[0].frame.width / photo.frame.width - 1.25) < 0.0001 && abs(stretched.scene.elements[0].frame.height / photo.frame.height - 1.125) < 0.0001, "Shift stretches axes independently")
         state.preview(resized); state.finish(from: original); state.undo(); check(state.value == original && !state.canUndo, "One gesture is one undo")
         for h in SceneTransformController.handles {
             let target = targets.first { !$0.rotation && $0.handle == h }!
@@ -76,6 +76,15 @@ import AppKit
         let turnDelta = CGPoint(x: turn.point.x-center.x, y: turn.point.y-center.y)
         let rotated = SceneTransformController.applying(groupState.value, target: turn, from: turn.point, to: CGPoint(x: center.x-turnDelta.y, y: center.y+turnDelta.x), stretch: false, crop: false)
         check(abs(rotated.scene.elements[0].rotation-photo.rotation-90) < 0.0001 && abs(hypot(rotated.scene.elements[0].frame.midX-center.x, rotated.scene.elements[0].frame.midY-center.y)-hypot(photo.frame.midX-center.x, photo.frame.midY-center.y)) < 0.0001, "Group rotation orbits center")
+        let edge = targets.first { !$0.rotation && $0.handle.x == 1 && $0.handle.y == 0 }!
+        let edgeDelta = SceneTransformController.rotate(CGPoint(x: 30, y: 0), photo.rotation * .pi/180)
+        let edgeResized = SceneTransformController.applying(original, target: edge, from: edge.point, to: CGPoint(x: edge.point.x+edgeDelta.x, y: edge.point.y+edgeDelta.y), stretch: false, crop: false).scene.elements[0]
+        let oldCorners = SceneGeometry.corners(photo), newCorners = SceneGeometry.corners(edgeResized)
+        let oldAnchor = CGPoint(x: (oldCorners[0].x+oldCorners[3].x)/2, y: (oldCorners[0].y+oldCorners[3].y)/2)
+        let newAnchor = CGPoint(x: (newCorners[0].x+newCorners[3].x)/2, y: (newCorners[0].y+newCorners[3].y)/2)
+        check(hypot(oldAnchor.x-newAnchor.x, oldAnchor.y-newAnchor.y) < 0.0001 && abs(edgeResized.frame.width/photo.frame.width-edgeResized.frame.height/photo.frame.height) < 0.0001, "Proportional edge resize anchors opposite edge center")
+        let expanded = SceneTransformController.applying(original, target: edge, from: edge.point, to: CGPoint(x: edge.point.x+edgeDelta.x*100, y: edge.point.y+edgeDelta.y*100), stretch: false, crop: true).scene.elements[0]
+        check(abs(expanded.frame.width - 150) < 0.0001 && abs(expanded.imageRect!.maxX-expanded.frame.width) < 0.0001, "Crop expansion clamps at source edge")
         let tiny = SceneTransformController.applying(original, target: corner, from: grab, to: CGPoint(x: grab.x-10000, y: grab.y-10000), stretch: true, crop: false).scene.elements[0]
         check(tiny.frame.width > 0 && tiny.frame.height > 0, "Resize never flips")
         photo.kind = .text; photo.assetID = nil; photo.imageRect = nil
@@ -96,13 +105,82 @@ import AppKit
         let canvas = controller.view
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544), styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas; canvas.editSelection()
-        guard let input = canvas.subviews.compactMap({ $0 as? NSTextView }).first else { fatalError("Missing native text input") }
-        check(abs(input.bounds.width * 1.5-input.frame.width) < 0.01 && abs(input.bounds.height * 2-input.frame.height) < 0.01, "Native input uses persisted anisotropic coordinates")
+        func descendants(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(descendants) }
+        guard let input = descendants(canvas).compactMap({ $0 as? NSTextView }).first else { fatalError("Missing native text input") }
+        let actualOrigin = canvas.convert(CGPoint.zero, from: input)
+        let actualEnd = canvas.convert(CGPoint(x: input.bounds.maxX, y: input.bounds.maxY), from: input)
+        let expected = canvas.viewport.viewRect(e.frame)
+        check(hypot(actualOrigin.x-expected.minX, actualOrigin.y-expected.minY) < 0.01 && hypot(actualEnd.x-expected.maxX, actualEnd.y-expected.maxY) < 0.01, "Native glyph coordinates map to rendered frame")
+        input.layoutManager?.ensureLayout(for: input.textContainer!)
+        let glyphs = input.layoutManager!.glyphRange(for: input.textContainer!)
+        let glyphRect = input.layoutManager!.boundingRect(forGlyphRange: glyphs, in: input.textContainer!)
+        let glyphStart = canvas.convert(glyphRect.origin, from: input)
+        let glyphEnd = canvas.convert(CGPoint(x: glyphRect.maxX, y: glyphRect.maxY), from: input)
+        let measured = SceneTextLayout.measure(e, width: e.frame.width / e.textScaleX!)
+        check(abs(glyphStart.x-expected.minX) < 1 && abs((glyphEnd.x-glyphStart.x)-measured.width*e.textScaleX!) < 4, "Native glyph layout aligns with rendered text and scale")
         check(input.string == e.text && input.selectedRange().location == (e.text as NSString).length, "Scaled input keeps text and insertion point")
         input.setMarkedText("ж", selectedRange: NSRange(location: 1, length: 0), replacementRange: input.selectedRange())
         check(input.hasMarkedText() && state.scene.elements[0].text == e.text, "Scaled input preserves marked text until committed")
         input.unmarkText(); canvas.finishText()
+        state.editSelected { $0.rotation = 37 }
+        for _ in 0..<2 {
+            canvas.editSelection()
+            guard let rotatedInput = descendants(canvas).compactMap({ $0 as? NSTextView }).first else { fatalError("Missing rotated input") }
+            for _ in 0..<3 {
+                canvas.layout()
+                let start = canvas.convert(CGPoint.zero, from: rotatedInput)
+                let right = canvas.convert(CGPoint(x: rotatedInput.bounds.maxX, y: 0), from: rotatedInput)
+                let end = canvas.convert(CGPoint(x: rotatedInput.bounds.maxX, y: rotatedInput.bounds.maxY), from: rotatedInput)
+                let corners = SceneGeometry.corners(state.scene.elements[0]).map { canvas.viewport.viewPoint($0) }
+                check(hypot(start.x-corners[0].x, start.y-corners[0].y) < 0.01 && hypot(right.x-corners[1].x, right.y-corners[1].y) < 0.01 && hypot(end.x-corners[2].x, end.y-corners[2].y) < 0.01, "Rotated native text stays aligned across refresh and re-entry")
+            }
+            canvas.finishText()
+        }
         withExtendedLifetime(controller) {}
+    }
+    static func nativeTransformGestures(_ store: SceneStore) {
+        var e = item(100); e.text = "Transform test"; e.frame.size.height = 38
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [e])); state.select([e.id])
+        let controller = SceneCanvasController(state: state, store: store), canvas = controller.view
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas
+        func descendants(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(descendants) }
+        func mouse(_ type: NSEvent.EventType, point: CGPoint, count: Int = 1) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: count, pressure: 1)!
+        }
+        let handle = canvas.viewport.viewPoint(CGPoint(x: e.frame.maxX, y: e.frame.maxY))
+        canvas.mouseDown(with: mouse(.leftMouseDown, point: handle)); canvas.mouseUp(with: mouse(.leftMouseUp, point: handle))
+        check(state.scene.elements[0] == e && !state.canUndo, "No-motion transform has no history")
+        canvas.mouseDown(with: mouse(.leftMouseDown, point: handle))
+        canvas.mouseDragged(with: mouse(.leftMouseDragged, point: CGPoint(x: handle.x+30, y: handle.y+20)))
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        canvas.keyDown(with: escape); canvas.mouseUp(with: mouse(.leftMouseUp, point: handle))
+        check(state.scene.elements[0] == e && !state.canUndo, "Escape restores a canvas transform without history")
+        let edge = canvas.viewport.viewPoint(CGPoint(x: e.frame.minX+1, y: e.frame.midY))
+        canvas.mouseDown(with: mouse(.leftMouseDown, point: edge, count: 2))
+        guard let input = descendants(canvas).compactMap({ $0 as? NSTextView }).first else { fatalError("Double-click edge must edit text") }
+        let right = canvas.convert(CGPoint(x: input.bounds.maxX-1, y: input.bounds.midY), from: input)
+        let dragged = CGPoint(x: right.x+30, y: right.y)
+        input.mouseDown(with: mouse(.leftMouseDown, point: right)); input.mouseDragged(with: mouse(.leftMouseDragged, point: dragged))
+        check(state.scene.elements[0].frame.width > e.frame.width, "Text width gesture previews")
+        _ = canvas.textView(input, doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        input.mouseUp(with: mouse(.leftMouseUp, point: dragged))
+        check(state.scene.elements[0] == e && !state.canUndo, "Escape cancels native width gesture without history")
+        input.mouseDown(with: mouse(.leftMouseDown, point: right)); input.mouseDragged(with: mouse(.leftMouseDragged, point: dragged)); input.mouseUp(with: mouse(.leftMouseUp, point: dragged))
+        check(state.canUndo && state.scene.elements[0].frame.width > e.frame.width, "Width drag commits")
+        state.undo(); check(state.scene.elements[0] == e && !state.canUndo, "Width drag commits one Undo")
+        canvas.finishText()
+        var image = SceneElementModel(kind: .image, frame: CGRect(x: 300, y: 100, width: 100, height: 100))
+        image.assetID = nil
+        let imageState = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [image])); imageState.select([image.id])
+        let imageController = SceneCanvasController(state: imageState, store: store), imageCanvas = imageController.view
+        window.contentView = imageCanvas
+        var replaced = false; imageController.onPickReplacement = { _ in replaced = true }
+        let p = imageCanvas.viewport.viewPoint(CGPoint(x: image.frame.minX+1, y: image.frame.midY))
+        let click = NSEvent.mouseEvent(with: .leftMouseDown, location: imageCanvas.convert(p, to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 2, pressure: 1)!
+        imageCanvas.mouseDown(with: click)
+        check(replaced, "Double-click image edge requests replacement")
+        withExtendedLifetime((controller, imageController)) {}
     }
     static func cancelCanvasDrag(_ store: SceneStore, duplicate: Bool) {
         _ = NSApplication.shared
@@ -541,6 +619,7 @@ import AppKit
         geometryAndHistory()
         transforms()
         transformedTextInput(store)
+        nativeTransformGestures(store)
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
         shiftGestures(store)

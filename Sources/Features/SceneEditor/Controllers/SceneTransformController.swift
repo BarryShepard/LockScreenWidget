@@ -47,6 +47,20 @@ enum SceneTransformController {
         }
         return nil
     }
+    private static let rotationCursor: NSCursor = {
+        guard let image = NSImage(systemSymbolName: "rotate.right", accessibilityDescription: "Вращение") else { return .crosshair }
+        image.size = CGSize(width: 18, height: 18)
+        return NSCursor(image: image, hotSpot: CGPoint(x: 9, y: 9))
+    }()
+    static func cursor(_ target: Target, rotation: Double) -> NSCursor {
+        if target.rotation { return rotationCursor }
+        let h = target.handle
+        let vector = rotate(CGPoint(x: CGFloat(h.x), y: CGFloat(h.y)), rotation * .pi/180)
+        let angle = atan2(vector.y, vector.x)
+        let octant = (Int((angle / (.pi/4)).rounded()) % 8 + 8) % 8
+        let positions: [NSCursor.FrameResizePosition] = [.right, .bottomRight, .bottom, .bottomLeft, .left, .topLeft, .top, .topRight]
+        return NSCursor.frameResize(position: positions[octant], directions: .all)
+    }
     private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x-b.x, a.y-b.y) }
     static func applying(_ start: SceneSnapshot, target: Target, from: CGPoint, to: CGPoint, stretch: Bool, crop: Bool) -> SceneSnapshot {
         var result = start

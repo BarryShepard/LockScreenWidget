@@ -3,9 +3,12 @@ import AppKit
 private final class SceneInputView: NSTextView {
     var onWidthGesture: ((NSEvent, Int, Int) -> Void)?
     private var widthSide = 0
+    func cancelWidthGesture() { widthSide = 0 }
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        let hit: CGFloat = 6
+        let origin = convert(CGPoint.zero, to: nil)
+        let unit = convert(CGPoint(x: 1, y: 0), to: nil)
+        let hit: CGFloat = 6 / max(0.0001, hypot(unit.x-origin.x, unit.y-origin.y))
         widthSide = p.x <= bounds.minX + hit ? -1 : (p.x >= bounds.maxX - hit ? 1 : 0)
         if widthSide != 0 && !hasMarkedText() { onWidthGesture?(event, widthSide, 0) } else { widthSide = 0; super.mouseDown(with: event) }
     }
@@ -19,6 +22,10 @@ private final class SceneInputView: NSTextView {
     override var undoManager: UndoManager? { localHistory }
     @objc func undo(_ sender: Any?) { localHistory.undo() }
     @objc func redo(_ sender: Any?) { localHistory.redo() }
+}
+
+private final class SceneTextContainerView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 enum SceneCanvasAction {
@@ -54,6 +61,8 @@ struct SceneTextInputPresentation {
 }
 
 final class SceneCanvasView: NSView, NSTextViewDelegate {
+    var onCursor: ((CGPoint) -> NSCursor?)?
+    private var cursorTracking: NSTrackingArea?
     var onAction: ((SceneCanvasAction) -> Void)?
     var onMouseDown: ((NSEvent) -> Void)?
     var onMouseDragged: ((NSEvent) -> Void)?
@@ -69,6 +78,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     private let renderer = SceneRenderer()
     private var presentation = SceneCanvasPresentation()
     private var input: SceneInputView?
+    private var inputContainer: SceneTextContainerView?
     private var inputScale: CGFloat = 1
     var viewport: SceneViewport {
         SceneViewport(size: presentation.content.canvasSize, in: bounds.insetBy(dx: 22, dy: 22))
@@ -92,15 +102,18 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         if cursorChanged { window?.invalidateCursorRects(for: self) }
         needsDisplay = true
     }
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        if presentation.textTool { addCursorRect(viewport.rect, cursor: .crosshair) }
-        for target in presentation.handles {
-            let p = viewport.viewPoint(target.point)
-            addCursorRect(CGRect(x: p.x-7, y: p.y-7, width: 14, height: 14), cursor: target.rotation ? .crosshair : .openHand)
-        }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let cursorTracking { removeTrackingArea(cursorTracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area); cursorTracking = area
     }
-    func showTransformRestriction() { presentation.badge = "Группа: доступно только пропорциональное масштабирование"; needsDisplay = true }
+    override func mouseMoved(with event: NSEvent) {
+        let point = scenePoint(event.locationInWindow)
+        (presentation.textTool ? NSCursor.crosshair : (onCursor?(point) ?? .arrow)).set()
+    }
+    override func mouseExited(with event: NSEvent) { NSCursor.arrow.set() }
+    func cancelTextWidthGesture() { input?.cancelWidthGesture() }
     func focus() { window?.makeFirstResponder(self) }
     func createCenteredText() { onAction?(.createText) }
     func editSelection() { onAction?(.editSelection) }
@@ -188,7 +201,10 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         field.insertionPointColor = presentation.color
         inputScale = viewport.scale
         input = field
-        addSubview(field)
+        let container = SceneTextContainerView(frame: .zero)
+        inputContainer = container
+        addSubview(container)
+        container.addSubview(field)
         updateText(presentation)
         window?.makeFirstResponder(field)
         let end = (text as NSString).length
@@ -204,16 +220,25 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
             input.typingAttributes = presentation.attributes
             inputScale = viewport.scale
         }
-        input.frameCenterRotation = 0
-        input.frame = viewport.viewRect(presentation.frame)
-        input.bounds = CGRect(x: 0, y: 0, width: input.frame.width / presentation.scaleX, height: input.frame.height / presentation.scaleY)
+        guard let container = inputContainer else { return }
+        container.frameCenterRotation = 0
+        container.frame = viewport.viewRect(presentation.frame)
+        let logicalSize = CGSize(width: container.frame.width / presentation.scaleX, height: container.frame.height / presentation.scaleY)
+        container.bounds = CGRect(origin: .zero, size: logicalSize)
+        input.frame = CGRect(origin: .zero, size: logicalSize)
         input.textContainerInset = CGSize(width: 0, height: presentation.yOffset * viewport.scale)
-        input.frameCenterRotation = -presentation.rotation
+        container.frameCenterRotation = presentation.rotation
+        // AppKit adjusts the frame origin when bounds scale or rotation changes.
+        // Anchor the transformed local center to the renderer’s scene center.
+        let center = convert(CGPoint(x: logicalSize.width/2, y: logicalSize.height/2), from: container)
+        let desired = viewport.viewPoint(CGPoint(x: presentation.frame.midX, y: presentation.frame.midY))
+        container.setFrameOrigin(CGPoint(x: container.frame.origin.x + desired.x-center.x, y: container.frame.origin.y + desired.y-center.y))
         input.alphaValue = max(0.2, presentation.opacity)
     }
     func endText() {
         input?.delegate = nil
-        input?.removeFromSuperview()
+        inputContainer?.removeFromSuperview()
+        inputContainer = nil
         input = nil
         needsDisplay = true
     }
@@ -223,7 +248,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         onTextChange?(input.string)
     }
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        if selector == #selector(cancelOperation(_:)) { finishText(); focus(); return true }
+        if selector == #selector(cancelOperation(_:)) { onAction?(.cancel); return true }
         return false
     }
     func textDidEndEditing(_ notification: Notification) { finishText() }

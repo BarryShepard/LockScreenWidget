@@ -32,6 +32,12 @@ final class SceneCanvasController {
         images = SceneImageController(state: state, store: store)
         presentationController = ScenePresentationController(store: store)
         view.onAction = { [weak self] action in self?.handle(action); self?.refresh() }
+        view.onCursor = { [weak self] point in
+            guard let self else { return nil }
+            let selected = self.state.selected
+            guard let target = SceneTransformController.hit(point, elements: selected, scale: self.view.viewport.scale) else { return nil }
+            return SceneTransformController.cursor(target, rotation: selected.count == 1 ? selected[0].rotation : 0)
+        }
         view.onMouseDown = { [weak self] event in self?.mouseDown(with: event); self?.refresh() }
         view.onMouseDragged = { [weak self] event in self?.mouseDragged(with: event); self?.refresh() }
         view.onMouseUp = { [weak self] event in self?.mouseUp(with: event); self?.refresh() }
@@ -73,7 +79,7 @@ final class SceneCanvasController {
         presentation.content = presentationController.content(for: state.scene)
         presentation.selectionOutlines = selected.map(SceneGeometry.corners)
         presentation.selectionBounds = selected.count > 1 ? SceneGeometry.bounds(selected) : nil
-        presentation.marquee = original != nil && downID == nil && dragging ? dragRect : nil
+        presentation.marquee = original != nil && transform == nil && downID == nil && dragging ? dragRect : nil
         presentation.handles = editingID == nil && !textTool ? SceneTransformController.targets(selected, scale: view.viewport.scale).map { SceneCanvasHandle(point: $0.point, rotation: $0.rotation) } : []
         presentation.textTool = textTool
         presentation.editingID = editingID
@@ -94,17 +100,17 @@ final class SceneCanvasController {
         finishText(); view.focus()
         let point = view.scenePoint(event.locationInWindow)
         guard view.contains(event.locationInWindow) else { state.select([]); return }
-        if !textTool, let target = SceneTransformController.hit(point, elements: state.selected, scale: view.viewport.scale) {
-            dragStart = point; dragCurrent = point; original = state.value
-            transform = target; cropGesture = event.modifierFlags.contains(.command) && state.selected.count == 1 && state.selected[0].kind == .image && !target.rotation
-            dragging = false; return
-        }
         let hit = textTool ? nil : state.hit(point)
         if event.clickCount == 2, let e = hit {
             state.select([e.id])
             if e.kind == .text { beginEditing(e, initial: state.value, isNew: false, click: event.locationInWindow) }
             else { onPickReplacement?(e.id) }
             return
+        }
+        if !textTool, let target = SceneTransformController.hit(point, elements: state.selected, scale: view.viewport.scale) {
+            dragStart = point; dragCurrent = point; original = state.value
+            transform = target; cropGesture = event.modifierFlags.contains(.command) && state.selected.count == 1 && state.selected[0].kind == .image && !target.rotation
+            dragging = false; return
         }
         dragStart = point; dragCurrent = point; original = state.value; moveBase = nil
         dragging = false; axisX = nil; downID = hit?.id
@@ -235,6 +241,7 @@ final class SceneCanvasController {
         refresh()
     }
     func finishText() {
+        if let start = widthStart { state.preview(start); widthStart = nil; view.cancelTextWidthGesture() }
         guard let initial = initialText, let id = editingID else { return }
         let restore = typed
         initialText = nil
@@ -278,10 +285,14 @@ final class SceneCanvasController {
         return true
     }
     private func cancel() {
-        if let snapshot = original {
+        if let start = widthStart {
+            widthStart = nil; state.preview(start); initialText = start; view.cancelTextWidthGesture(); refresh()
+        } else if let snapshot = original {
             clearGesture()
             textTool = false
             state.preview(snapshot)
+        } else if editingID != nil {
+            finishText(); view.focus()
         } else if textTool {
             textTool = false
         } else {
