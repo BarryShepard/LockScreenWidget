@@ -9,7 +9,9 @@ import AppKit
         for (width,height) in sizes {
             for event in events {
                 let view = CountdownView(overlay: true)
-                view.render(content: makeCountdownDisplay(event: event, now: parseEventDay("2026-11-04")!), settings: EditorSettingsModel())
+                view.render(makeCountdownPresentation(
+                    content: makeCountdownDisplay(event: event, now: parseEventDay("2026-11-04")!),
+                    settings: EditorSettingsModel()))
                 let frame = CountdownView.overlayFrame(in: NSRect(x: 0, y: 0, width: width, height: height))
                 let bounds = NSRect(origin: .zero, size: frame.size)
                 view.frame = bounds
@@ -19,6 +21,15 @@ import AppKit
                 for pair in zip(runs, runs.dropFirst()) { assert(pair.0.frame.maxY <= pair.1.frame.minY) }
             }
         }
+        // Controller-prepared period labels preserve the font cap without changing stored settings.
+        let periodView = CountdownView(overlay: true)
+        let periodSettings = EditorSettingsModel()
+        periodView.render(makeCountdownPresentation(content: CountdownDisplayModel(counter: "2030", usesCountdown: false),
+                                                   settings: periodSettings))
+        let periodRun = periodView.layout(in: NSRect(x: 0, y: 0, width: 1512, height: 982))[1]
+        assert((periodRun.attributes[.font] as! NSFont).pointSize == 42)
+        assert(abs((periodRun.attributes[.kern] as! CGFloat) - (-0.84)) < 0.001)
+        assert(periodSettings.typography[1].size == 112)
         func makeEditor() -> EditorWindowController {
             let controller = EditorWindowController(model: ApplicationModel(catalog: EventCatalogModel(events: events), settings: EditorSettingsModel()), preferences: MemoryPreferences())
             controller.canvas.previewScreenSize = NSSize(width: 1512, height: 982)
@@ -92,6 +103,9 @@ import AppKit
         assert(abs(editor.canvas.layout(in: editor.canvas.bounds)[2].frame.midY - editor.canvas.bounds.midY) < 0.001)
         editor.setInformationVisible(false)
         assert(editor.selectedIndices.isEmpty)
+        assert(editor.editorView.inspector.block.indexOfSelectedItem == 0)
+        assert(editor.editorView.inspector.block.item(at: 2)?.isEnabled == false)
+        assert(!editor.editorView.inspector.size.isEnabled)
         editor.selectBlock(0)
         var typography = editor.model.settings.typography[0]
         typography.family = "Helvetica Neue"
@@ -107,6 +121,7 @@ import AppKit
         assert(abs((styled.attributes[.kern] as! CGFloat) - 1.9) < 0.001)
         assert((styled.attributes[.paragraphStyle] as! NSParagraphStyle).alignment == .left)
         assert((styled.attributes[.paragraphStyle] as! NSParagraphStyle).minimumLineHeight == 50)
+        assert(styled.verticalAlignment == 1, "Bottom alignment must use all spare text-box height")
         assert(editor.model.settings.typography[1].size == 112, "Typography edits must preserve other blocks")
         typography.size = 26
         typography.lineHeight = 10
@@ -148,12 +163,12 @@ import AppKit
         let deadline = parseEventDay("2026-11-13")!
         ticker.refresh(at: deadline.addingTimeInterval(-1))
         assert(lock.currentDisplay.counter == "00:00:01")
-        assert(editor.canvas.content.counter == "2030", "Preview choice must not replace the lock-screen event")
+        assert(editor.canvas.presentation.blocks[1].text == "2030", "Preview choice must not replace the lock-screen event")
         ticker.refresh(at: deadline)
         assert(lock.currentDisplay.title == events.first { $0.id == "upcoming-01" }!.title)
         editor.selectEvent(at: 0)
         ticker.refresh(at: deadline)
-        assert(editor.canvas.content.counter == lock.currentDisplay.counter)
+        assert(editor.canvas.presentation.blocks[1].text == lock.currentDisplay.counter)
         print("Typography, migration, information visibility, keyboard steps, and canvas centering passed.")
         print("Dragging, marquee/group selection, Shift axes, and shared edge constraints passed.")
         print("348 overlay layouts passed: system font, all events, six display sizes.")

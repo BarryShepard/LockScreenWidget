@@ -46,7 +46,9 @@ import AppKit
         var commits = 0
         model.onUpdate = { if case .committed = $0 { commits += 1 } }
 
-        let canvas = SceneCanvasView(state: model, store: store)
+        let canvasController = SceneCanvasController(state: model, store: store)
+        defer { withExtendedLifetime(canvasController) {} }
+        let canvas = canvasController.view
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 844, height: 544)),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
@@ -82,7 +84,9 @@ import AppKit
     static func shiftGestures(_ store: SceneStore) {
         let first = item(50), second = item(300)
         let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [first, second]))
-        let canvas = SceneCanvasView(state: model, store: store)
+        let canvasController = SceneCanvasController(state: model, store: store)
+        defer { withExtendedLifetime(canvasController) {} }
+        let canvas = canvasController.view
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
@@ -121,7 +125,9 @@ import AppKit
                 let model = SceneEditingStateModel(empty)
                 var commits = 0
                 model.onUpdate = { if case .committed = $0 { commits += 1 } }
-                let canvas = SceneCanvasView(state: model, store: store)
+                let canvasController = SceneCanvasController(state: model, store: store)
+                defer { withExtendedLifetime(canvasController) {} }
+                let canvas = canvasController.view
                 let window = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 844, height: 544)),
                                       styleMask: .borderless, backing: .buffered, defer: false)
                 window.contentView = canvas
@@ -160,7 +166,9 @@ import AppKit
         let existing = EditorSceneModel(canvasSize: size, elements: [saved])
         let model = SceneEditingStateModel(existing)
         model.select([saved.id])
-        let canvas = SceneCanvasView(state: model, store: store)
+        let canvasController = SceneCanvasController(state: model, store: store)
+        defer { withExtendedLifetime(canvasController) {} }
+        let canvas = canvasController.view
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: CGSize(width: 844, height: 544)),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas; canvas.editSelection()
@@ -193,9 +201,10 @@ import AppKit
         check(complete.count > 256 && NSImage(data: truncated)?.size == CGSize(width: width, height: height),
               "Recognizable PNG prefix retains the original dimensions")
         let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size))
+        let imageController = SceneImageController(state: model, store: store)
         let empty = model.value
         let good = SceneImageInput(data: complete), bad = SceneImageInput(data: truncated)
-        try model.importImages([good], at: .add(model.insertionPoint), store: store)
+        try imageController.importImages([good], at: .add(imageController.insertionPoint))
         let before = model.value, layer = model.selected[0]
         let url = store.imageURL(for: layer.assetID!)!
         let assets = directory.appendingPathComponent("Assets")
@@ -208,7 +217,7 @@ import AppKit
         }
         for (inputs, target) in [([bad], SceneImageDestination.replace(layer.id)), ([good, bad], .add(.zero))] {
             do {
-                try model.importImages(inputs, at: target, store: store)
+                try imageController.importImages(inputs, at: target)
                 fatalError("Truncated PNG accepted")
             } catch is SceneError { }
             check(model.value == before && !model.canRedo, "Failed imports keep the scene, selection and redo history")
@@ -222,7 +231,7 @@ import AppKit
         }
         model.undo()
         do {
-            try model.importImages([good, bad], at: .add(.zero), store: store)
+            try imageController.importImages([good, bad], at: .add(.zero))
             fatalError("Truncated PNG accepted with pending Redo")
         } catch is SceneError { }
         check(model.value == empty && model.canRedo && !model.canUndo, "A failed batch preserves pending Redo")
@@ -251,23 +260,24 @@ import AppKit
         let fileInputs = try images()
         check(fileInputs.count == 1 && fileInputs[0].data == png, "Original local file URL copied")
         let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size))
-        try model.importImages(fileInputs, at: .add(CGPoint(x: 200,y: 200)), store: store)
+        let imageController = SceneImageController(state: model, store: store)
+        try imageController.importImages(fileInputs, at: .add(CGPoint(x: 200,y: 200)))
         var original = model.selected[0]
         model.editSelected { $0.rotation = 28; $0.cornerRadius = 5; $0.opacity = 0.4 }
         original = model.selected[0]
-        let captured = model.pasteImageDestination
+        let captured = imageController.pasteImageDestination
         check(captured == .replace(original.id), "Clipboard captures selected image")
         try FileManager.default.removeItem(at: file)
         board.clearContents(); check(board.setData(png, forType: .png), "Private board accepts PNG")
-        try model.importImages(try images(), at: .add(CGPoint(x: 550,y: 400)), store: store)
+        try imageController.importImages(try images(), at: .add(CGPoint(x: 550,y: 400)))
         let second = model.selected[0]
         check(model.scene.elements.count == 2 && second.id != original.id, "Explicit add ignores selected photo")
-        check(model.dropDestination(at: CGPoint(x: 200,y: 200)) == .replace(original.id), "Drop targets hit image independently of selection")
+        check(imageController.dropDestination(at: CGPoint(x: 200,y: 200)) == .replace(original.id), "Drop targets hit image independently of selection")
         let free = CGPoint(x: 10,y: 20)
-        check(model.dropDestination(at: free) == .add(free), "Drop on empty canvas adds")
+        check(imageController.dropDestination(at: free) == .add(free), "Drop on empty canvas adds")
         board.clearContents(); check(board.setData(tiff, forType: .tiff), "Private board accepts TIFF")
         let tiffInputs = try images()
-        try model.importImages(tiffInputs, at: captured, store: store)
+        try imageController.importImages(tiffInputs, at: captured)
         let replaced = model.scene.elements[0]
         var expected = original; expected.assetID = replaced.assetID; expected.imageRect = replaced.imageRect
         check(replaced == expected && replaced.assetID != original.assetID && model.scene.elements[1] == second,
@@ -276,12 +286,12 @@ import AppKit
         model.undo()
         check(model.scene.elements == [original,second] && store.image(for: original.assetID!) != nil, "Old imported source survives replacement Undo")
         let before = model.value
-        do { try model.importImages([fileInputs[0],SceneImageInput(data: Data([1,2]))], at: .add(free), store: store)
+        do { try imageController.importImages([fileInputs[0],SceneImageInput(data: Data([1,2]))], at: .add(free))
             fatalError("Broken batch accepted") } catch {}
         check(model.value == before, "Broken batch leaves scene and selection unchanged")
-        try model.importImages([fileInputs[0],tiffInputs[0]], at: .add(free), store: store)
+        try imageController.importImages([fileInputs[0],tiffInputs[0]], at: .add(free))
         check(model.selected.count == 2, "Batch selects new images")
-        check(model.pasteImageDestination == .add(model.insertionPoint), "Multiple selection pastes as new layers")
+        check(imageController.pasteImageDestination == .add(imageController.insertionPoint), "Multiple selection pastes as new layers")
         model.undo(); check(model.value == before, "One Undo for whole batch")
         check(try SceneTransfer.write([original,second], to: board), "Internal private-board layer copy")
         guard case .layers(let layers) = try SceneTransfer.read(board) else { fatalError("Missing internal copy") }
@@ -302,6 +312,159 @@ import AppKit
         check(!String(decoding: bytes,as: UTF8.self).contains("autoTextWidth"), "Older payload has no width mode")
         check(try JSONDecoder().decode(SceneElementModel.self, from: bytes).autoTextWidth == nil, "Older payload decodes as fixed")
     }
+    static func inspectorValidation() {
+        _ = NSApplication.shared
+        var text = item(100); text.style.lineHeight = 48
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [text]))
+        model.select([text.id]); let original = model.value
+        model.editSelected { $0.name = "Сохранённое изменение" }
+        let saved = model.value
+        model.undo()
+        let view = SceneInspectorView(frame: .zero)
+        let controller = SceneInspectorController(state: model, view: view)
+        var errors = [String](), updates = 0
+        controller.onError = { errors.append($0) }
+        model.onUpdate = { _ in updates += 1 }
+        let invalid = [("w", "0"), ("h", "-1"), ("size", "nan"), ("opacity", "101"),
+                       ("line", "-1"), ("x", "inf"), ("color", "#XYZXYZ")]
+        for (key, raw) in invalid {
+            controller.applyField(key: key, raw: raw, label: "Проверяемое поле")
+            check(model.value == original && !model.canUndo && model.canRedo,
+                  "Invalid \(key) leaves the scene, selection and pending Redo unchanged")
+        }
+        controller.applyField(key: "w", raw: " \n ", label: "Ширина")
+        controller.applyMenu(key: "weight", index: 9)
+        check(errors.count == invalid.count && errors.allSatisfy { $0.contains("Проверяемое поле") } && updates == 0,
+              "Invalid fields report their label; empty fields and invalid menu indices do not edit or emit updates")
+        model.redo()
+        check(model.value == saved, "Validation preserves the full pending Redo snapshot")
+        model.undo()
+        controller.applyField(key: "x", raw: " 12,5 ", label: "X")
+        check(model.selected[0].frame.minX == 12.5 && !model.canRedo,
+              "Decimal-comma input is trimmed and replaces pending Redo with the new edit")
+        model.undo()
+        check(model.value == original && !model.canUndo, "A numeric inspector edit adds exactly one Undo step")
+        model.redo()
+        let beforeAuto = model.value
+        controller.applyField(key: "line", raw: " аВтО ", label: "Строка")
+        check(model.selected[0].style.lineHeight == 0 && controller.makePresentation().fields["line"]?.text == "Авто",
+              "Case-insensitive Авто selects natural line height and is presented consistently")
+        check(model.selected[0].frame.height >= beforeAuto.scene.elements[0].frame.height,
+              "Changing line height preserves the minimum text frame height")
+        model.undo()
+        check(model.value == beforeAuto, "Automatic line-height fitting is undone together with the style edit")
+        let beforeColor = model.selected[0].frame
+        controller.applyField(key: "color", raw: "#123456", label: "Цвет")
+        check(model.selected[0].style.color == SceneColor(red: 18.0 / 255, green: 52.0 / 255, blue: 86.0 / 255, alpha: 1) &&
+              model.selected[0].frame == beforeColor && controller.makePresentation().fields["color"]?.text == "123456FF",
+              "Six-digit HEX uses opaque alpha without resizing the text frame")
+    }
+
+    static func inspectorGeometry() {
+        var text = item(100); text.rotation = 30; text.autoTextWidth = true
+        let image = SceneElementModel(kind: .image, frame: CGRect(x: 300, y: 200, width: 200, height: 80),
+                                      imageRect: CGRect(x: -20, y: -10, width: 240, height: 100))
+        let other = item(600)
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [text, image, other]))
+        model.select([text.id, image.id]); let original = model.value
+        let view = SceneInspectorView(frame: .zero)
+        let controller = SceneInspectorController(state: model, view: view)
+        let dx = image.frame.minX - text.frame.minX, dy = image.frame.minY - text.frame.minY
+        controller.applyField(key: "x", raw: "25,5", label: "X")
+        check(abs(SceneGeometry.bounds(model.selected)!.minX - 25.5) < 0.0001 &&
+              abs(model.selected[1].frame.minX - model.selected[0].frame.minX - dx) < 0.0001 &&
+              model.selected[1].frame.minY - model.selected[0].frame.minY == dy && model.scene.elements[2] == other,
+              "Group X moves rotated bounds while preserving spacing and unselected layers")
+        model.undo()
+        check(model.value == original && !model.canUndo, "Group translation is one Undo step")
+        controller.applyField(key: "y", raw: "-30", label: "Y")
+        check(abs(SceneGeometry.bounds(model.selected)!.minY + 30) < 0.0001 &&
+              abs(model.selected[1].frame.minY - model.selected[0].frame.minY - dy) < 0.0001,
+              "Group Y moves rotated bounds without changing vertical spacing")
+        model.undo()
+        controller.applyField(key: "w", raw: "250", label: "Ширина")
+        check(model.selected.allSatisfy { $0.frame.width == 250 } && model.selected[0].autoTextWidth == false &&
+              model.selected[0].frame.height == text.frame.height &&
+              model.selected[1].imageRect == CGRect(x: -25, y: -10, width: 300, height: 100) && model.scene.elements[2] == other,
+              "Batch width sets fixed text width and scales image placement along X only")
+        model.undo()
+        check(model.value == original && !model.canUndo, "One Undo restores both text width mode and image crop")
+        controller.applyField(key: "h", raw: "160", label: "Высота")
+        check(model.selected.allSatisfy { $0.frame.height == 160 } && model.selected[0].autoTextWidth == true &&
+              model.selected[1].frame.width == image.frame.width &&
+              model.selected[1].imageRect == CGRect(x: -20, y: -20, width: 240, height: 200),
+              "Batch height scales image placement along Y without disabling automatic text width")
+        model.undo()
+        check(model.value == original, "Batch height changes undo atomically")
+    }
+
+    static func inspectorSelection() {
+        var first = item(50), middle = item(250), last = item(450)
+        first.name = "Одинаковое имя"; middle.name = "Средний"; last.name = first.name
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [first, middle, last]))
+        model.select([first.id])
+        let view = SceneInspectorView(frame: .zero)
+        let controller = SceneInspectorController(state: model, view: view)
+        var focus = 0
+        controller.onFocus = { focus += 1 }
+        let initial = controller.makePresentation()
+        check(initial.layers == [last.name, middle.name, first.name] && initial.selectedRows == IndexSet(integer: 2),
+              "Inspector lists layers from front to back and presents selection in reversed row order")
+        view.onSelectionChange?(IndexSet([0, 1, 99]))
+        check(model.selection == [last.id, middle.id] && !model.canUndo && focus == 1,
+              "Row events map to distinct IDs, ignore stale out-of-range rows and return canvas focus")
+        model.reorder(.back); controller.refresh()
+        check(controller.makePresentation().selectedRows == IndexSet([1, 2]), "Layer reordering updates presented selection rows")
+        view.onSelectionChange?(IndexSet(integer: 0))
+        check(model.selection == [first.id] && focus == 2,
+              "Refreshed row mapping selects the new top layer even when names are duplicated")
+        view.onFocus?()
+        check(focus == 3, "Clicking an already-selected layer can still return canvas focus")
+        view.onMenuChange?("align", 2)
+        check(model.selected[0].style.horizontalAlignment == 2 && focus == 4,
+              "A menu event applies the zero-based value and returns canvas focus")
+        view.onCenter?(true)
+        check(abs(SceneGeometry.bounds(model.selected)!.midX - size.width / 2) < 0.0001 && focus == 5,
+              "A center event changes geometry and returns canvas focus")
+    }
+
+    static func inspectorNativeEditing() {
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        var first = item(50), second = item(250)
+        first.opacity = 0.25; second.opacity = 0.75
+        let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [first, second]))
+        model.select([first.id, second.id]); let original = model.value
+        let view = SceneInspectorView(frame: .zero)
+        let controller = SceneInspectorController(state: model, view: view)
+        let presentation = controller.makePresentation()
+        check(presentation.fields["opacity"]?.text == "" && presentation.fields["opacity"]?.placeholder == "Разные" &&
+              presentation.fields["w"]?.text == "100" && presentation.fields["w"]?.placeholder == nil,
+              "Mixed and uniform selection values have distinct presentation states")
+        let field = descendants(view).compactMap { $0 as? NSTextField }.first { $0.identifier?.rawValue == "opacity" }!
+        var focus = 0
+        controller.onFocus = { focus += 1 }
+        view.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field,
+            userInfo: ["NSTextMovement": NSNumber(value: NSTextMovement.return.rawValue)]))
+        check(model.value == original && !model.canUndo && focus == 1,
+              "Return in an untouched mixed field requests focus without broadcasting an empty value")
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 340, height: 700),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+        check(window.makeFirstResponder(field), "Inspector field accepts native editing focus")
+        guard let editor = field.currentEditor() as? NSTextView else { fatalError("Missing native inspector field editor") }
+        editor.string = "63,5"
+        view.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+        controller.refresh()
+        check(editor.string == "63,5" && model.value == original,
+              "A refresh preserves uncommitted text in the active native field editor")
+        check(window.makeFirstResponder(nil), "Native inspector editing can finish")
+        check(model.selected.allSatisfy { $0.opacity == 0.635 } && model.canUndo,
+              "Finishing an edited mixed field applies its value to the whole selection")
+        model.undo()
+        check(model.value == original && !model.canUndo, "The edited mixed field creates one batch Undo step")
+        withExtendedLifetime(controller) {}
+    }
+
     static func main() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -313,6 +476,10 @@ import AppKit
         markedTextFinishing(store)
         try truncatedImports(directory, store)
         try imports(directory,store); try widths(store)
-        print("SceneEditingTests passed: rotated selection, history, layer order, group movement, Shift-click and Shift-held drag, Escape during move/copy, image routing, private pasteboard and text widths")
+        inspectorValidation()
+        inspectorGeometry()
+        inspectorSelection()
+        inspectorNativeEditing()
+        print("SceneEditingTests passed: rotated selection, history, layer order, group movement, Shift-click and Shift-held drag, Escape during move/copy, image routing, private pasteboard, text widths and inspector input")
     }
 }

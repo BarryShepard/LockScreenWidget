@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 enum SceneElementKind: String, Codable { case text, image }
 
@@ -19,10 +19,6 @@ struct SceneColor: Codable, Equatable {
     var green: Double = 1
     var blue: Double = 1
     var alpha: Double = 1
-
-    var nsColor: NSColor {
-        NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
-    }
 }
 
 struct SceneTextStyleModel: Codable, Equatable {
@@ -37,21 +33,6 @@ struct SceneTextStyleModel: Codable, Equatable {
     var horizontalAlignment = 0
     var verticalAlignment = 0
     var color = SceneColor()
-
-    func font(scale: CGFloat) -> NSFont {
-        let weights: [NSFont.Weight] = [.ultraLight, .thin, .light, .regular, .medium, .semibold, .bold, .heavy, .black]
-        let index = min(8, max(0, weight))
-        let pointSize = fontSize.isFinite && fontSize > 0 && scale.isFinite && scale > 0 &&
-            (fontSize * scale).isFinite ? fontSize * scale : 32
-        if family != "System" {
-            let managerWeights = [1, 2, 3, 5, 6, 7, 9, 11, 14]
-            if let font = NSFontManager.shared.font(withFamily: family, traits: [],
-                                                    weight: managerWeights[index], size: pointSize) {
-                return font
-            }
-        }
-        return NSFont.systemFont(ofSize: pointSize, weight: weights[index])
-    }
 }
 
 struct SceneElementModel: Codable, Equatable, Identifiable {

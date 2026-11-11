@@ -145,9 +145,9 @@ import AppKit
         let reopened = try SceneStore(directory: directory)
         check(try reopened.load() == scene)
         assert(reopened.image(for: assetID)?.isValid == true)
-        assert(abs(text.style.font(scale: 0.5).pointSize - 21) < 0.001)
+        assert(abs(SceneTextLayout.font(text.style, scale: 0.5).pointSize - 21) < 0.001)
         assert(text.style.family == "Missing Font For Scene Test", "Font fallback must preserve the stored family")
-        let color = text.style.color.nsColor.usingColorSpace(.sRGB)!
+        let color = SceneTextLayout.color(text.style.color).usingColorSpace(.sRGB)!
         assert(abs(color.redComponent - 0.2) < 0.001 && abs(color.alphaComponent - 0.8) < 0.001)
         assert(scene.elements[2].style.fontSize == 18, "Block styles must remain independent")
 

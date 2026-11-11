@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 enum SceneGeometry {
     static func corners(_ e: SceneElementModel) -> [CGPoint] {

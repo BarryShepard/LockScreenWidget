@@ -1,18 +1,16 @@
 import AppKit
 
-func makeTypographyFont(_ typography: BlockTypographyModel, scale: CGFloat, digits: Bool) -> NSFont {
-    let weights: [NSFont.Weight] = [.ultraLight, .thin, .light, .regular, .medium, .semibold, .bold, .heavy, .black]
+func makeTypographyFont(_ typography: TypographyPresentation, scale: CGFloat) -> NSFont {
     let pointSize = typography.size * scale
     let base: NSFont
     if typography.family == "System" {
-        base = digits ? NSFont.monospacedDigitSystemFont(ofSize: pointSize, weight: weights[typography.weight])
-                      : NSFont.systemFont(ofSize: pointSize, weight: weights[typography.weight])
+        base = typography.usesMonospacedDigits ? NSFont.monospacedDigitSystemFont(ofSize: pointSize, weight: typography.weight)
+                                              : NSFont.systemFont(ofSize: pointSize, weight: typography.weight)
     } else {
-        let managerWeights = [1, 2, 3, 5, 6, 7, 9, 11, 14]
-        base = NSFontManager.shared.font(withFamily: typography.family, traits: [], weight: managerWeights[typography.weight], size: pointSize)
-            ?? NSFont.systemFont(ofSize: pointSize, weight: weights[typography.weight])
+        base = NSFontManager.shared.font(withFamily: typography.family, traits: [], weight: typography.managerWeight, size: pointSize)
+            ?? NSFont.systemFont(ofSize: pointSize, weight: typography.weight)
     }
-    guard digits else { return base }
+    guard typography.usesMonospacedDigits else { return base }
     let descriptor = base.fontDescriptor.addingAttributes([
         .featureSettings: [[NSFontDescriptor.FeatureKey.typeIdentifier: 6,
                             NSFontDescriptor.FeatureKey.selectorIdentifier: 0]]

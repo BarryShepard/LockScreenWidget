@@ -20,6 +20,8 @@ final class LockScreenController: NSObject {
     private let targetScreenID: String?
     private var scene: EditorSceneModel?
     private var sceneStore: SceneStore?
+    private var scenePresentation: ScenePresentationController?
+    private var sceneContent: SceneRenderContent?
     private let scheduleAfter: (TimeInterval, @escaping () -> Void) -> Void
     private let distributed = DistributedNotificationCenter.default()
     private var panels: [OverlayPanel] = []
@@ -93,15 +95,23 @@ final class LockScreenController: NSObject {
 
     /// A committed empty scene is still scene content; nil alone means legacy fallback.
     func sceneDidChange(_ scene: EditorSceneModel?, store: SceneStore) {
-        guard self.scene != scene else { return }
+        guard self.scene != scene || sceneStore !== store else { return }
         let routeChanged = (self.scene == nil) != (scene == nil)
         self.scene = scene
-        sceneStore = store
+        if sceneStore !== store {
+            sceneStore = store
+            scenePresentation = ScenePresentationController(store: store)
+        }
+        if let scene, let scenePresentation {
+            sceneContent = scenePresentation.content(for: scene)
+        } else {
+            sceneContent = nil
+        }
         if routeChanged {
             clearPanels()
             if observing { updatePanels(at: Date()) }
-        } else if let scene {
-            for panel in panels { (panel.contentView as? SceneDisplayView)?.scene = scene }
+        } else if let sceneContent {
+            for panel in panels { (panel.contentView as? SceneDisplayView)?.content = sceneContent }
         }
     }
 
@@ -200,7 +210,7 @@ final class LockScreenController: NSObject {
     private func renderCountdownPanels() {
         guard scene == nil else { return }
         for panel in panels {
-            (panel.contentView as? CountdownView)?.render(content: currentDisplay, settings: model.settings)
+            (panel.contentView as? CountdownView)?.render(makeCountdownPresentation(content: currentDisplay, settings: model.settings))
         }
     }
 
@@ -216,9 +226,9 @@ final class LockScreenController: NSObject {
             }
             result = [OverlayPanel(screenFrame: screens[index].frame)]
         } else { result = NSScreen.screens.map { OverlayPanel(screenFrame: $0.frame) } }
-        if let scene, let store = sceneStore {
+        if let sceneContent {
             for panel in result {
-                panel.contentView = SceneDisplayView(scene: scene, store: store)
+                panel.contentView = SceneDisplayView(content: sceneContent)
                 panel.contentView?.isHidden = true
             }
         }

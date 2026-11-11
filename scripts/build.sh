@@ -21,6 +21,7 @@ for architecture in "${ARCHITECTURES[@]}"; do
     "$PROJECT_DIR"/Sources/Features/*/Controllers/*.swift \
     "$PROJECT_DIR"/Sources/Shared/Models/*.swift "$PROJECT_DIR"/Sources/Shared/Views/*.swift \
     "$PROJECT_DIR"/Sources/Shared/Scene/Models/*.swift \
+    "$PROJECT_DIR"/Sources/Shared/Scene/Controllers/*.swift \
     "$PROJECT_DIR"/Sources/Shared/Scene/Rendering/*.swift \
     "$PROJECT_DIR"/Sources/Shared/Scene/Storage/*.swift \
     "$PROJECT_DIR"/Sources/Infrastructure/*.swift \

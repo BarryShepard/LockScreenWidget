@@ -129,12 +129,20 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
         if let event { NSWorkspace.shared.open(event.sourceURL) }
     }
 
-    private func renderCanvas() {
-        canvas.render(content: makeCountdownDisplay(event: previewEvent(at: now), now: now),
-                      settings: model.settings, selectedIndices: selectedIndices, marquee: marquee)
+    private var countdownPresentation: CountdownPresentation {
+        makeCountdownPresentation(content: makeCountdownDisplay(event: previewEvent(at: now), now: now),
+                                  settings: model.settings)
     }
 
-    private func refreshInspector() { editorView.inspector.render(settings: model.settings, selectedIndices: selectedIndices) }
+    private func renderCanvas() {
+        canvas.render(countdownPresentation, selectedIndices: selectedIndices, marquee: marquee)
+    }
+
+    private func refreshInspector() {
+        let inspector = editorView.inspector
+        inspector.render(makeTypographyInspectorPresentation(settings: model.settings,
+            selectedIndices: selectedIndices, fallbackBlockIndex: inspector.block.indexOfSelectedItem))
+    }
 
     private func selectionDidChange() { renderCanvas(); refreshInspector() }
 
@@ -249,7 +257,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
 
     func beginInteraction(at point: NSPoint, extendingSelection: Bool) {
         canvas.window?.makeFirstResponder(canvas)
-        let runs = canvas.layout(in: canvas.bounds, settings: model.settings)
+        let runs = canvas.layout(in: canvas.bounds, presentation: countdownPresentation)
         let hit = runs.indices.reversed().first { runs[$0].frame.contains(point) }
         dragStart = point
         lockedAxis = nil
@@ -261,7 +269,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
                 moveElement(selected, to: NSPoint(x: offsets[selected * 2], y: offsets[selected * 2 + 1]))
             }
             originalOffsets = offsets
-            originalFrames = canvas.layout(in: canvas.bounds, settings: model.settings).map(\.frame)
+            originalFrames = canvas.layout(in: canvas.bounds, presentation: countdownPresentation).map(\.frame)
             draggingElements = true
         } else {
             draggingElements = false
@@ -278,7 +286,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
             let rect = NSRect(x: min(point.x, dragStart.x), y: min(point.y, dragStart.y),
                               width: abs(point.x - dragStart.x), height: abs(point.y - dragStart.y))
             marquee = rect
-            let runs = canvas.layout(in: canvas.bounds, settings: model.settings)
+            let runs = canvas.layout(in: canvas.bounds, presentation: countdownPresentation)
             let hits = runs.indices.filter { runs[$0].frame.intersects(rect) }
             selectedIndices = selectionBeforeMarquee.union(hits)
             refreshInspector()
@@ -316,7 +324,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
         guard visibleBlockIndices(in: model.settings).contains(index), offset.x.isFinite, offset.y.isFinite else { return }
         offsets[index * 2] = 0
         offsets[index * 2 + 1] = 0
-        let base = canvas.layout(in: canvas.bounds, settings: model.settings)[index].frame
+        let base = canvas.layout(in: canvas.bounds, presentation: countdownPresentation)[index].frame
         let area = canvas.canvasFrame(in: canvas.bounds)
         guard area.width > 0, area.height > 0 else { return }
         offsets[index * 2] = min(max(offset.x, (area.minX - base.minX) / area.width),
@@ -331,7 +339,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
         guard !selectedIndices.isEmpty else { return }
         for index in selectedIndices { moveElement(index, to: NSPoint(x: offsets[index * 2], y: offsets[index * 2 + 1])) }
         let area = canvas.canvasFrame(in: canvas.bounds)
-        let runs = canvas.layout(in: canvas.bounds, settings: model.settings)
+        let runs = canvas.layout(in: canvas.bounds, presentation: countdownPresentation)
         let frames = selectedIndices.map { runs[$0].frame }
         let tx = min(max(dx, frames.map { area.minX - $0.minX }.max() ?? 0), frames.map { area.maxX - $0.maxX }.min() ?? 0)
         let ty = min(max(dy, frames.map { area.minY - $0.minY }.max() ?? 0), frames.map { area.maxY - $0.maxY }.min() ?? 0)
@@ -353,7 +361,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
 
     func centerSelection(horizontal: Bool) {
         guard !selectedIndices.isEmpty else { return }
-        let runs = canvas.layout(in: canvas.bounds, settings: model.settings)
+        let runs = canvas.layout(in: canvas.bounds, presentation: countdownPresentation)
         let group = selectedIndices.map { runs[$0].frame }.reduce(NSRect.null) { $0.union($1) }
         let area = canvas.canvasFrame(in: canvas.bounds)
         translateSelection(dx: horizontal ? area.midX - group.midX : 0,

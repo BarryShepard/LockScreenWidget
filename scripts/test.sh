@@ -2,6 +2,7 @@
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFTC="${SWIFTC:-swiftc}"
+bash "$PROJECT_DIR/scripts/check-architecture.sh"
 mkdir -p "$PROJECT_DIR/build/ModuleCache"
 COMMON=(-swift-version 5 -module-cache-path "$PROJECT_DIR/build/ModuleCache")
 MODELS=("$PROJECT_DIR"/Sources/Features/Countdown/Models/*.swift "$PROJECT_DIR"/Sources/Shared/Models/*.swift)
@@ -19,6 +20,7 @@ SCENE_SOURCES=(
   "$PROJECT_DIR"/Sources/Features/SceneEditor/Views/*.swift
   "$PROJECT_DIR"/Sources/Features/SceneEditor/Controllers/*.swift
   "$PROJECT_DIR"/Sources/Shared/Scene/Models/*.swift
+  "$PROJECT_DIR"/Sources/Shared/Scene/Controllers/*.swift
   "$PROJECT_DIR"/Sources/Shared/Scene/Rendering/*.swift
   "$PROJECT_DIR"/Sources/Shared/Scene/Storage/*.swift
 )
@@ -35,6 +37,7 @@ for suite in LayoutTests LockScreenControllerTests; do
 done
 "$SWIFTC" "${COMMON[@]}" -framework AppKit \
   "$PROJECT_DIR/Sources/Shared/Scene/Models/SceneModel.swift" "$PROJECT_DIR/Sources/Shared/Scene/Storage/SceneStore.swift" \
+  "$PROJECT_DIR/Sources/Shared/Scene/Controllers/SceneTextLayout.swift" \
   "$PROJECT_DIR/Tests/SceneTests.swift" -o "$PROJECT_DIR/build/SceneTests"
 "$PROJECT_DIR/build/SceneTests"
 "$SWIFTC" "${COMMON[@]}" -framework AppKit "${SCENE_SOURCES[@]}" \
