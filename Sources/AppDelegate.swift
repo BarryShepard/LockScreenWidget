@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var enabledMenu: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        logDiagnostic("launch")
+        logDiagnostic("launch: pid=\(ProcessInfo.processInfo.processIdentifier) version=\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown") revision=\(Bundle.main.infoDictionary?["TEotWSourceRevision"] as? String ?? "unknown")")
         do {
             // Capture before revealing either editor: NSApplication's main screen can
             // change with focus, and screen array ordering can change on hot plug.

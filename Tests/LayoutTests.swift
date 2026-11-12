@@ -157,7 +157,7 @@ import AppKit
         assert(editor.model.settings.typography[0].size == 38.5)
         editor.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: sizeField))
         assert(sizeField.stringValue == "38.5")
-        let lock = LockScreenController(model: editor.model, readLockState: { false })
+        let lock = LockScreenController(model: editor.model, readLockState: { .unlocked }, diagnostic: { _ in })
         let ticker = CountdownController { now in editor.refresh(at: now); lock.refresh(at: now) }
         editor.selectEvent(at: events.firstIndex { $0.id == "upcoming-35" }! + 1)
         let deadline = parseEventDay("2026-11-13")!

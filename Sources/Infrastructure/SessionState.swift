@@ -1,9 +1,18 @@
 import CoreGraphics
 import Foundation
 
-func readSessionLockState() -> Bool? {
-    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return nil }
-    // The dictionary key is undocumented. Fail closed unless the session is ours and active.
-    guard let onConsole = session[kCGSessionOnConsoleKey as String] as? Bool, onConsole else { return false }
-    return session["CGSSessionScreenIsLocked"] as? Bool ?? false
+enum LockSessionState: String {
+    case locked, unlocked, inactive, activeWithoutLockFlag, unknown
+}
+
+func decodeSessionState(_ session: [String: Any]?) -> LockSessionState {
+    guard let session else { return .unknown }
+    guard let onConsole = session[kCGSessionOnConsoleKey as String] as? Bool else { return .unknown }
+    guard onConsole else { return .inactive }
+    guard let locked = session["CGSSessionScreenIsLocked"] as? Bool else { return .activeWithoutLockFlag }
+    return locked ? .locked : .unlocked
+}
+
+func readSessionLockState() -> LockSessionState {
+    decodeSessionState(CGSessionCopyCurrentDictionary() as? [String: Any])
 }

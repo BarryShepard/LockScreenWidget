@@ -38,7 +38,9 @@ cp "$PROJECT_DIR/Resources/events.json" "$APP_DIR/Contents/Resources/"
 cp "$PROJECT_DIR/Resources/Fonts/Manrope.ttf" "$PROJECT_DIR/Resources/Fonts/OFL.txt" "$APP_DIR/Contents/Resources/Fonts/"
 mkdir -p "$APP_DIR/Contents/Resources/Licenses"
 cp "$PROJECT_DIR/Resources/Licenses/SkyLightWindow-MIT.txt" "$APP_DIR/Contents/Resources/Licenses/"
-cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+REVISION="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || printf unknown)"
+if [[ -n "$(git -C "$PROJECT_DIR" status --porcelain -- Sources scripts 2>/dev/null)" ]]; then REVISION="${REVISION}-dirty"; fi
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -50,6 +52,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.4.0</string>
 <key>CFBundleVersion</key><string>4</string>
+<key>TEotWSourceRevision</key><string>${REVISION}</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSUIElement</key><true/>

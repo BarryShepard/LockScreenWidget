@@ -15,7 +15,15 @@ enum SceneScreenIdentity {
 
 final class LockScreenController: NSObject {
     private let model: ApplicationModel
-    private let readLockState: () -> Bool?
+    private let readLockState: () -> LockSessionState
+    private let makeSpace: () -> LockScreenSpaceManaging?
+    private let diagnostic: (String) -> Void
+    private var suspended = false
+    private var missingLockFlagPolls = 0
+    private var lastRetry: Date?
+    private var lastHeartbeat: Date?
+    private let screenConfiguration: () -> [String]
+    private var lastScreenConfiguration: [String]?
     private let makePanels: (() -> [OverlayPanel])?
     private let targetScreenID: String?
     private var scene: EditorSceneModel?
@@ -25,7 +33,7 @@ final class LockScreenController: NSObject {
     private let scheduleAfter: (TimeInterval, @escaping () -> Void) -> Void
     private let distributed = DistributedNotificationCenter.default()
     private var panels: [OverlayPanel] = []
-    private var lockSpace: LockScreenSpace?
+    private var lockSpace: LockScreenSpaceManaging?
     private var locked = false
     private var observing = false
     private var testingPanel = false
@@ -35,15 +43,27 @@ final class LockScreenController: NSObject {
     var onTestWillBegin: (() -> Void)?
     var onTestDidEnd: ((PanelTestCompletion) -> Void)?
 
-    init(model: ApplicationModel, readLockState: @escaping () -> Bool? = readSessionLockState,
+    init(model: ApplicationModel, readLockState: @escaping () -> LockSessionState = readSessionLockState,
+         makeSpace: @escaping () -> LockScreenSpaceManaging? = { LockScreenSpace() },
+         diagnostic: @escaping (String) -> Void = logDiagnostic,
          makePanels: (() -> [OverlayPanel])? = nil,
+         screenConfiguration: @escaping () -> [String] = {
+             NSScreen.screens.map { screen in
+                 let identity = SceneScreenIdentity.identifier(for: screen) ?? "unknown"
+                 let frame = screen.frame
+                 return "\(identity):\(frame.origin.x),\(frame.origin.y),\(frame.width),\(frame.height)"
+             }.sorted()
+         },
          targetScreenID: String? = NSScreen.main.flatMap(SceneScreenIdentity.identifier),
          scheduleAfter: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
              DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
          }) {
         self.model = model
         self.readLockState = readLockState
+        self.makeSpace = makeSpace
+        self.diagnostic = diagnostic
         self.makePanels = makePanels
+        self.screenConfiguration = screenConfiguration
         self.targetScreenID = targetScreenID
         self.scheduleAfter = scheduleAfter
         super.init()
@@ -52,6 +72,7 @@ final class LockScreenController: NSObject {
     func start() {
         guard !observing else { return }
         observing = true
+        lastScreenConfiguration = screenConfiguration()
         distributed.addObserver(self, selector: #selector(didLock), name: .init("com.apple.screenIsLocked"), object: nil)
         distributed.addObserver(self, selector: #selector(didUnlock), name: .init("com.apple.screenIsUnlocked"), object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(sessionResigned),
@@ -62,8 +83,7 @@ final class LockScreenController: NSObject {
             name: NSWorkspace.didWakeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
-        locked = readLockState() ?? false
-        updatePanels(at: Date())
+        reconcile(readLockState(), source: "start", at: Date())
     }
 
     func stop() {
@@ -73,19 +93,27 @@ final class LockScreenController: NSObject {
         NotificationCenter.default.removeObserver(self)
         cancelPanelTest(completion: .discardEditor)
         clearPanels()
+        locked = false
+        suspended = false
+        missingLockFlagPolls = 0
+        lastRetry = nil
+        lastHeartbeat = nil
     }
 
     func refresh(at now: Date) {
         currentDisplay = makeCountdownDisplay(event: selectNextEvent(in: model.catalog, now: now), now: now)
-        let actual = readLockState() ?? false
-        if actual != locked {
-            logDiagnostic("lock-poll=\(actual)")
-            locked = actual
-            cancelPanelTest(completion: locked ? .deferEditor : .restoreEditor)
+        reconcile(readLockState(), source: "poll", at: now)
+        if locked && !suspended && model.isEnabled && panels.isEmpty &&
+            (lastRetry == nil || now.timeIntervalSince(lastRetry!) >= 2 || now < lastRetry!) {
             updatePanels(at: now)
         }
+        if locked && !suspended && (lastHeartbeat == nil || now.timeIntervalSince(lastHeartbeat!) >= 30 || now < lastHeartbeat!) {
+            lastHeartbeat = now
+            diagnostic("heartbeat: panels=\(panels.count)")
+            logPanelState()
+        }
         renderCountdownPanels()
-        for panel in panels where (locked && model.isEnabled) || testingPanel {
+        for panel in panels where (locked && !suspended && model.isEnabled) || testingPanel {
             // loginwindow may finish ordering its shield after the lock notification.
             panel.orderFrontRegardless()
         }
@@ -123,13 +151,15 @@ final class LockScreenController: NSObject {
     }
 
     @objc private func didLock() {
-        logDiagnostic("lock-notification")
+        diagnostic("lock-notification")
+        missingLockFlagPolls = 0
         locked = true
+        suspended = false
         cancelPanelTest(completion: .deferEditor)
         updatePanels(at: Date())
         for delay in [0.5, 2.0] {
             scheduleAfter(delay) { [weak self] in
-                guard let self, self.observing, self.locked, self.model.isEnabled, self.readLockState() == true else { return }
+                guard let self, self.observing, self.locked, self.model.isEnabled, self.readLockState() == .locked else { return }
                 self.updatePanels(at: Date())
                 self.logPanelState()
             }
@@ -137,26 +167,72 @@ final class LockScreenController: NSObject {
     }
 
     @objc private func didUnlock() {
-        logDiagnostic("unlock-notification")
+        diagnostic("unlock-notification")
+        missingLockFlagPolls = 0
         locked = false
+        suspended = false
         cancelPanelTest(completion: .restoreEditor)
         updatePanels(at: Date())
     }
 
     @objc private func sessionResigned() {
-        logDiagnostic("inactive-notification")
-        locked = false
-        cancelPanelTest(completion: .deferEditor)
-        clearPanels()
+        let state = readLockState()
+        diagnostic("session-resign: evidence=\(state.rawValue)")
+        if state == .unknown || state == .activeWithoutLockFlag {
+            suspended = true
+            cancelPanelTest(completion: .deferEditor)
+            clearPanels()
+        } else {
+            reconcile(state, source: "resign", at: Date())
+        }
     }
 
     @objc private func screenWake() {
-        locked = readLockState() ?? false
-        if locked { cancelPanelTest(completion: .deferEditor) }
-        else if !testingPanel { onTestDidEnd?(.restoreEditor) }
+        let state = readLockState()
+        diagnostic("wake-notification: evidence=\(state.rawValue)")
+        let alreadyActive = locked && !suspended
+        reconcile(state, source: "wake", at: Date())
+        if state == .locked && alreadyActive { updatePanels(at: Date()) }
+    }
+
+    private func reconcile(_ state: LockSessionState, source: String, at now: Date) {
+        if source != "poll" || (state == .locked && (!locked || suspended)) || ((state == .unlocked || state == .inactive) && (locked || suspended)) { diagnostic("session: source=\(source) evidence=\(state.rawValue) locked=\(locked) suspended=\(suspended)") }
+        if state != .activeWithoutLockFlag { missingLockFlagPolls = 0 }
+        switch state {
+        case .unknown: return
+        case .activeWithoutLockFlag:
+            // A missing private key is also the normal unlocked representation on
+            // some systems. Require consecutive polls before treating it as such.
+            guard source == "poll", locked || suspended else { return }
+            missingLockFlagPolls += 1
+            guard missingLockFlagPolls >= 2 else { return }
+            reconcile(.unlocked, source: "missing-lock-flag-confirmed", at: now)
+        case .locked:
+            let changed = !locked || suspended
+            locked = true
+            suspended = false
+            if changed {
+                cancelPanelTest(completion: .deferEditor)
+                updatePanels(at: now)
+            }
+        case .unlocked, .inactive:
+            let changed = locked || suspended || (state == .inactive && testingPanel)
+            locked = false
+            suspended = false
+            if changed {
+                cancelPanelTest(completion: state == .unlocked ? .restoreEditor : .deferEditor)
+                updatePanels(at: now)
+            }
+        }
+    }
+    @objc private func screensChanged() {
+        let configuration = screenConfiguration()
+        guard configuration != lastScreenConfiguration else { return }
+        lastScreenConfiguration = configuration
+        diagnostic("screen-configuration-changed")
+        clearPanels()
         updatePanels(at: Date())
     }
-    @objc private func screensChanged() { clearPanels(); updatePanels(at: Date()) }
 
     @objc func testPanel() {
         guard !locked else { return }
@@ -180,22 +256,23 @@ final class LockScreenController: NSObject {
     }
 
     private func updatePanels(at now: Date) {
-        logDiagnostic("panels: locked=\(locked) enabled=\(model.isEnabled)")
-        guard (locked && model.isEnabled) || testingPanel else { clearPanels(); return }
+        diagnostic("panels: locked=\(locked) enabled=\(model.isEnabled)")
+        lastRetry = now
+        guard (locked && !suspended && model.isEnabled) || testingPanel else { clearPanels(); return }
         if panels.isEmpty { panels = createPanels() }
         guard !panels.isEmpty else { return }
         if locked {
-            if lockSpace == nil { lockSpace = LockScreenSpace() }
-            guard let lockSpace else { logDiagnostic("space: unavailable \(LockScreenSpace.lastFailure)"); clearPanels(); return }
+            if lockSpace == nil { lockSpace = makeSpace() }
+            guard let lockSpace else { diagnostic("space: unavailable \(LockScreenSpace.lastFailure)"); clearPanels(); return }
             for panel in panels {
                 panel.orderFrontRegardless()
                 guard lockSpace.attach(panel) else {
-                    logDiagnostic("space: attach-failed \(LockScreenSpace.lastFailure)")
+                    diagnostic("space: attach-failed \(LockScreenSpace.lastFailure)")
                     clearPanels()
                     return
                 }
             }
-            logDiagnostic("space: attached panels=\(panels.count)")
+            diagnostic("space: attached panels=\(panels.count)")
         }
         currentDisplay = makeCountdownDisplay(event: selectNextEvent(in: model.catalog, now: now), now: now)
         renderCountdownPanels()
@@ -221,7 +298,7 @@ final class LockScreenController: NSObject {
             let screens = NSScreen.screens
             guard let index = SceneScreenIdentity.matchingIndex(target: targetScreenID,
                                                                available: screens.map(SceneScreenIdentity.identifier)) else {
-                logDiagnostic("scene-screen: launch display unavailable; no replacement display selected")
+                diagnostic("scene-screen: launch display unavailable; no replacement display selected")
                 return []
             }
             result = [OverlayPanel(screenFrame: screens[index].frame)]
@@ -247,7 +324,7 @@ final class LockScreenController: NSObject {
     private func logPanelState() {
         for panel in panels {
             let content = panel.contentView is SceneDisplayView ? "scene" : "countdown"
-            logDiagnostic("panel: visible=\(panel.isVisible) activeSpace=\(panel.isOnActiveSpace) occlusion=\(panel.occlusionState.rawValue) level=\(panel.level.rawValue) content=\(content) contentSize=\(panel.contentView?.bounds.size ?? .zero) draws=\((panel.contentView as? CountdownView)?.drawCount ?? 0) loginVisible=\(panel.canBecomeVisibleWithoutLogin)")
+            diagnostic("panel: visible=\(panel.isVisible) activeSpace=\(panel.isOnActiveSpace) occlusion=\(panel.occlusionState.rawValue) level=\(panel.level.rawValue) content=\(content) contentSize=\(panel.contentView?.bounds.size ?? .zero) draws=\((panel.contentView as? CountdownView)?.drawCount ?? 0) loginVisible=\(panel.canBecomeVisibleWithoutLogin)")
         }
     }
 }

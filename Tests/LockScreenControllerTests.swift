@@ -18,15 +18,24 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
     }
 }
 
+private final class FakeSpace: LockScreenSpaceManaging {
+    var attachments = 0
+    var teardowns = 0
+    var succeeds = true
+    func attach(_ window: NSWindow) -> Bool { attachments += 1; return succeeds }
+    func tearDown() { teardowns += 1 }
+}
+
 @main struct LockScreenControllerTests {
     static func main() throws {
         let _ = NSApplication.shared
+        checkRecovery()
         let model = ApplicationModel(catalog: EventCatalogModel(), settings: EditorSettingsModel())
         var locked = false
         var delayedActions: [() -> Void] = []
         var began = 0
         var completions: [PanelTestCompletion] = []
-        let controller = LockScreenController(model: model, readLockState: { locked }, makePanels: { [] },
+        let controller = LockScreenController(model: model, readLockState: { locked ? .locked : .unlocked }, diagnostic: { _ in }, makePanels: { [] },
             scheduleAfter: { _, action in delayedActions.append(action) })
         controller.onTestWillBegin = { began += 1 }
         controller.onTestDidEnd = { completions.append($0) }
@@ -83,6 +92,92 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         print("Panel lifecycle checks passed: repeated tests, lock/unlock restoration, disable and shutdown.")
     }
 
+    static func checkRecovery() {
+        let console = kCGSessionOnConsoleKey as String
+        assert(decodeSessionState(nil) == .unknown)
+        assert(decodeSessionState([console: true]) == .activeWithoutLockFlag)
+        assert(decodeSessionState([console: false]) == .inactive)
+        assert(decodeSessionState([console: true, "CGSSessionScreenIsLocked": true]) == .locked)
+        assert(decodeSessionState([console: true, "CGSSessionScreenIsLocked": false]) == .unlocked)
+        let model = ApplicationModel(catalog: EventCatalogModel(), settings: EditorSettingsModel())
+        var state: LockSessionState = .unknown
+        var created: [OverlayPanel] = []
+        var attempts = 0
+        let space = FakeSpace()
+        var configuration = ["display:100x80"]
+        let controller = LockScreenController(model: model, readLockState: { state }, makeSpace: { space }, diagnostic: { _ in }, makePanels: {
+            attempts += 1
+            if attempts == 1 { return [] }
+            let panel = privatePanel(); created.append(panel); return [panel]
+        }, screenConfiguration: { configuration }, scheduleAfter: { _, _ in })
+        controller.start()
+        assert(attempts == 0, "Unknown cold start remains hidden")
+        let now = Date()
+        state = .locked; controller.refresh(at: now)
+        assert(attempts == 1)
+        state = .unknown; controller.refresh(at: now.addingTimeInterval(1))
+        assert(attempts == 1)
+        controller.refresh(at: now.addingTimeInterval(3))
+        assert(attempts == 2 && created[0].isVisible && space.attachments == 1)
+        for tick in 4...100 { controller.refresh(at: now.addingTimeInterval(Double(tick))) }
+        assert(created.count == 1 && space.attachments == 1 && created[0].isVisible)
+        for _ in 0..<100 { _ = controller.perform(NSSelectorFromString("screensChanged")) }
+        assert(created.count == 1 && space.attachments == 1 && space.teardowns == 0,
+               "Unchanged screen notifications must not rebuild panels")
+        configuration = ["display:120x80"]
+        _ = controller.perform(NSSelectorFromString("screensChanged"))
+        assert(created.count == 2 && space.teardowns == 1, "Changed geometry must rebuild")
+        state = .locked
+        _ = controller.perform(NSSelectorFromString("screenWake"))
+        assert(space.attachments == 3, "Wake must reattach existing window")
+        _ = controller.perform(NSSelectorFromString("sessionResigned"))
+        assert(created[1].isVisible, "Confirmed locked resignation must retain panel")
+        state = .unknown
+        _ = controller.perform(NSSelectorFromString("sessionResigned"))
+        assert(!created[1].isVisible && space.teardowns == 2)
+        _ = controller.perform(NSSelectorFromString("screenWake"))
+        assert(created.count == 2)
+        state = .locked; controller.refresh(at: now.addingTimeInterval(101))
+        assert(created.count == 3)
+        state = .activeWithoutLockFlag; controller.refresh(at: now.addingTimeInterval(102))
+        assert(created[2].isVisible)
+        state = .locked; controller.refresh(at: now.addingTimeInterval(103))
+        state = .activeWithoutLockFlag; controller.refresh(at: now.addingTimeInterval(104))
+        assert(created[2].isVisible)
+        controller.refresh(at: now.addingTimeInterval(105))
+        assert(!created[2].isVisible)
+        state = .inactive; controller.refresh(at: now.addingTimeInterval(106))
+        assert(!created[2].isVisible)
+        controller.refresh(at: now.addingTimeInterval(110))
+        assert(created.count == 3)
+        controller.stop()
+
+        var factoryAttempts = 0
+        var failures: [FakeSpace] = []
+        var retries = 0
+        let retryController = LockScreenController(model: model, readLockState: { .locked }, makeSpace: {
+            factoryAttempts += 1
+            if factoryAttempts == 1 { return nil }
+            let next = FakeSpace()
+            next.succeeds = factoryAttempts > 2
+            failures.append(next)
+            return next
+        }, diagnostic: { _ in }, makePanels: {
+            retries += 1
+            return [privatePanel()]
+        }, scheduleAfter: { _, _ in })
+        retryController.start()
+        let retryAt = Date().addingTimeInterval(3)
+        retryController.refresh(at: retryAt)
+        assert(factoryAttempts == 2 && failures[0].teardowns == 1)
+        retryController.refresh(at: retryAt.addingTimeInterval(1))
+        assert(factoryAttempts == 2)
+        retryController.refresh(at: retryAt.addingTimeInterval(3))
+        assert(factoryAttempts == 3 && retries == 3 && failures[1].attachments == 1)
+        retryController.stop()
+        assert(failures[1].teardowns == 1)
+    }
+
     static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
 
     static func privatePanel() -> OverlayPanel {
@@ -97,7 +192,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
                 let store = try SceneStore(directory: directory)
                 let empty = EditorSceneModel(canvasSize: CGSize(width: 800, height: 500))
                 var panel: OverlayPanel?
-                let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
+                let routing = LockScreenController(model: model, readLockState: { .unlocked }, diagnostic: { _ in }, makePanels: {
                     let next = privatePanel(); panel = next; return [next]
                 }, scheduleAfter: { _, _ in })
                 routing.start(); routing.testPanel()
@@ -141,7 +236,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         let store = try SceneStore(directory: directory)
         let empty = EditorSceneModel(canvasSize: CGSize(width: 800, height: 500))
         var panel: OverlayPanel?
-        let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
+        let routing = LockScreenController(model: model, readLockState: { .unlocked }, diagnostic: { _ in }, makePanels: {
             let next = privatePanel()
             panel = next
             return [next]
@@ -341,7 +436,7 @@ private final class InvalidationObservingSceneView: SceneDisplayView {
         assert(actions[9].keyEquivalent == "]" && actions[10].keyEquivalent == "[")
 
         var created: [OverlayPanel] = []
-        let routing = LockScreenController(model: model, readLockState: { false }, makePanels: {
+        let routing = LockScreenController(model: model, readLockState: { .unlocked }, diagnostic: { _ in }, makePanels: {
             let panel = privatePanel()
             created.append(panel)
             return [panel]

@@ -5,7 +5,12 @@ import Darwin
 
 /// Experimental WindowServer space, above the screen-lock space (300).
 /// No authentication, input handling, or persistent system settings are changed.
-final class LockScreenSpace {
+protocol LockScreenSpaceManaging: AnyObject {
+    func attach(_ window: NSWindow) -> Bool
+    func tearDown()
+}
+
+final class LockScreenSpace: LockScreenSpaceManaging {
     private(set) static var lastFailure = ""
     private typealias Connection = @convention(c) () -> Int32
     private typealias Create = @convention(c) (Int32, Int32, Int32) -> Int32
@@ -19,6 +24,7 @@ final class LockScreenSpace {
     private let handle: UnsafeMutableRawPointer
     private let connection: Int32
     private let space: Int32
+    private let show: Spaces
     private let add: Add
     private let remove: Remove
     private let hide: Spaces
@@ -59,6 +65,7 @@ final class LockScreenSpace {
         self.handle = handle
         self.connection = connection
         self.space = space
+        self.show = show
         self.add = add
         self.remove = remove
         self.hide = hide
@@ -68,7 +75,7 @@ final class LockScreenSpace {
     func attach(_ window: NSWindow) -> Bool {
         guard active, window.windowNumber > 0 else { Self.lastFailure = "attach: no window number"; return false }
         let number = window.windowNumber
-        if windowNumbers.contains(number) { return true }
+        show(connection, [NSNumber(value: space)] as CFArray)
         let windows = [NSNumber(value: number)] as CFArray
         // Managed-space queries omit this private space; they cannot verify the move.
         add(connection, space, windows, 7)
