@@ -39,6 +39,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
     var onFieldChange: ((String, String, String) -> Void)?
     var onMenuChange: ((String, Int) -> Void)?
     var onCenter: ((Bool) -> Void)?
+    let countdown = SceneCountdownInspectorView()
     private let table = SceneLayerTable(), properties = NSStackView()
     private let empty = NSTextField(wrappingLabelWithString: "")
     private let selectionLabel = NSTextField(labelWithString: "Свойства")
@@ -76,6 +77,8 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         let centers = NSStackView(views: [h,v]); centers.spacing = 4
         [h,v].forEach { $0.controlSize = .small }; properties.addArrangedSubview(centers)
         addField("opacity", "Непрозр., %")
+        properties.addArrangedSubview(countdown)
+        countdown.widthAnchor.constraint(equalTo: properties.widthAnchor).isActive = true
         addMenu("family", "Шрифт")
         addMenu("weight", "Начертание")
         addField("size", "Кегль, pt", text: true); addField("line", "Строка, pt", text: true)

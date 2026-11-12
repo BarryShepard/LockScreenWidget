@@ -8,8 +8,10 @@ final class SceneInspectorController {
     private let view: SceneInspectorView
     private let families = ["System"] + NSFontManager.shared.availableFontFamilies.sorted()
     private var rowIDs = [UUID]()
+    let countdown: SceneCountdownInspectorController
 
-    init(state: SceneEditingStateModel, view: SceneInspectorView) {
+    init(state: SceneEditingStateModel, view: SceneInspectorView, catalog: EventCatalogModel = .init(), now: Date = Date()) {
+        countdown = SceneCountdownInspectorController(state: state, view: view.countdown, catalog: catalog, now: now)
         self.state = state
         self.view = view
         view.onFocus = { [weak self] in self?.onFocus?() }
@@ -26,6 +28,7 @@ final class SceneInspectorController {
     func refresh() {
         rowIDs = state.scene.elements.reversed().map(\.id)
         view.render(makePresentation())
+        countdown.refresh()
     }
 
     func makePresentation() -> SceneInspectorPresentation {

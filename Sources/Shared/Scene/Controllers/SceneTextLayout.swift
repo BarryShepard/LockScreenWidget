@@ -40,7 +40,7 @@ enum SceneTextLayout {
     }
 
     static func fit(_ e: inout SceneElementModel, minimumHeight: CGFloat = 1) {
-        guard e.kind != .note else { return }
+        guard e.kind == .text else { return }
         let auto = e.autoTextWidth == true
         let sx = e.textScaleX ?? 1, sy = e.textScaleY ?? 1
         if auto { e.frame.size.width = max(28 * sx, (measure(e, width: .greatestFiniteMagnitude).width + 2) * sx) }

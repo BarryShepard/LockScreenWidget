@@ -30,6 +30,7 @@ final class LockScreenController: NSObject {
     private var sceneStore: SceneStore?
     private var scenePresentation: ScenePresentationController?
     private var sceneContent: SceneRenderContent?
+    private var sceneInstant = Date()
     private let scheduleAfter: (TimeInterval, @escaping () -> Void) -> Void
     private let distributed = DistributedNotificationCenter.default()
     private var panels: [OverlayPanel] = []
@@ -102,6 +103,8 @@ final class LockScreenController: NSObject {
     }
 
     func refresh(at now: Date) {
+        sceneInstant = now
+        refreshSceneContent(at: now)
         currentDisplay = makeCountdownDisplay(event: selectNextEvent(in: model.catalog, now: now), now: now)
         guard observing else { return }
         reconcile(readLockState(), source: "poll", at: now)
@@ -121,6 +124,14 @@ final class LockScreenController: NSObject {
         }
     }
 
+    private func refreshSceneContent(at now: Date) {
+        guard let scene, let scenePresentation else { return }
+        let content = scenePresentation.content(for: scene, catalog: model.catalog, at: now)
+        guard content != sceneContent else { return }
+        sceneContent = content
+        for panel in panels { (panel.contentView as? SceneDisplayView)?.content = content }
+    }
+
     func settingsDidChange() { renderCountdownPanels() }
 
     /// A committed empty scene is still scene content; nil alone means legacy fallback.
@@ -133,7 +144,7 @@ final class LockScreenController: NSObject {
             scenePresentation = ScenePresentationController(store: store)
         }
         if let scene, let scenePresentation {
-            sceneContent = scenePresentation.content(for: scene)
+            sceneContent = scenePresentation.content(for: scene, catalog: model.catalog, at: sceneInstant)
         } else {
             sceneContent = nil
         }

@@ -103,6 +103,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     var clock = true { didSet { needsDisplay = true } }
     private let renderer = SceneRenderer()
     private var presentation = SceneCanvasPresentation()
+    var renderedContent: SceneRenderContent { presentation.content }
     private var input: SceneInputView?
     private var inputContainer: SceneTextContainerView?
     var viewport: SceneViewport {
@@ -120,6 +121,11 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    func refreshContent(_ content: SceneRenderContent) {
+        guard content != presentation.content else { return }
+        presentation.content = content
+        needsDisplay = true
+    }
     func render(_ presentation: SceneCanvasPresentation) {
         guard presentation != self.presentation else { return }
         let cursorChanged = self.presentation.textTool != presentation.textTool || self.presentation.handles != presentation.handles

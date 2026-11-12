@@ -36,10 +36,12 @@ for suite in LayoutTests LockScreenControllerTests; do
   "$PROJECT_DIR/build/$suite" "$PROJECT_DIR"
 done
 "$SWIFTC" "${COMMON[@]}" -framework AppKit \
-  "$PROJECT_DIR/Sources/Shared/Scene/Models/SceneModel.swift" "$PROJECT_DIR/Sources/Shared/Scene/Storage/SceneStore.swift" \
+  "$PROJECT_DIR"/Sources/Shared/Scene/Models/*.swift "$PROJECT_DIR/Sources/Shared/Scene/Storage/SceneStore.swift" \
   "$PROJECT_DIR/Sources/Shared/Scene/Controllers/SceneTextLayout.swift" \
   "$PROJECT_DIR/Tests/SceneTests.swift" -o "$PROJECT_DIR/build/SceneTests"
 "$PROJECT_DIR/build/SceneTests"
-"$SWIFTC" "${COMMON[@]}" -framework AppKit "${SCENE_SOURCES[@]}" \
-  "$PROJECT_DIR/Tests/SceneEditingTests.swift" -o "$PROJECT_DIR/build/SceneEditingTests"
-"$PROJECT_DIR/build/SceneEditingTests"
+for suite in SceneEditingTests SceneCountdownTests; do
+  "$SWIFTC" "${COMMON[@]}" -framework AppKit "${MODELS[@]}" "${SCENE_SOURCES[@]}" \
+    "$PROJECT_DIR/Tests/$suite.swift" -o "$PROJECT_DIR/build/$suite"
+  "$PROJECT_DIR/build/$suite" "$PROJECT_DIR"
+done

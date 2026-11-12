@@ -23,15 +23,15 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     var onSceneChange: ((EditorSceneModel?) -> Void)?
     var onRevealLegacy: (() -> Void)?
 
-    init(scene: EditorSceneModel, hasSavedScene: Bool, store: SceneStore) {
+    init(scene: EditorSceneModel, hasSavedScene: Bool, store: SceneStore, catalog: EventCatalogModel = .init(), now: Date = Date()) {
         hasCommittedDocument = hasSavedScene
         savedDocument = hasSavedScene ? scene : nil
         desiredDocument = savedDocument
         self.store = store; state = SceneEditingStateModel(scene)
-        canvasController = SceneCanvasController(state: state, store: store)
+        canvasController = SceneCanvasController(state: state, store: store, catalog: catalog, now: now)
         canvas = canvasController.view
         inspector = SceneInspectorView(frame: .zero)
-        inspectorController = SceneInspectorController(state: state, view: inspector)
+        inspectorController = SceneInspectorController(state: state, view: inspector, catalog: catalog, now: now)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 710),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
@@ -39,6 +39,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false; window.delegate = self; window.center()
         buildWindow(window)
         state.onUpdate = { [weak self] in self?.update($0) }
+        canvasController.onEditCountdown = { [weak self] in self?.inspectorController.countdown.focus() }
         canvasController.onPickReplacement = { [weak self] id in self?.pick(.replace(id)) }
         canvasController.onPaste = { [weak self] board, target in self?.paste(board, drop: target) ?? false }
         canvasController.onRestoreTypedScene = { [weak self] in
@@ -52,6 +53,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         update(.selection)
     }
     required init?(coder: NSCoder) { fatalError() }
+    func refresh(at now: Date) { canvasController.refresh(at: now); inspectorController.countdown.refresh(at: now) }
     func showEditor() { NSApp.activate(ignoringOtherApps: true); window?.makeKeyAndOrderFront(nil); canvas.focus() }
     func setPersistenceBlocked(_ message: String) {
         blocked = message; pendingSave?.cancel(); pendingSave = nil; showError(message)
@@ -65,7 +67,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         let root = NSView(); window.contentView = root
         let bar = NSStackView(); bar.spacing = 8; bar.translatesAutoresizingMaskIntoConstraints = false
         let add = NSPopUpButton(frame: .zero, pullsDown: true)
-        add.addItem(withTitle: "Добавить"); add.addItem(withTitle: "Текст"); add.addItem(withTitle: "Заметка"); add.addItem(withTitle: "Фото с устройства…")
+        add.addItem(withTitle: "Добавить"); add.addItem(withTitle: "Текст"); add.addItem(withTitle: "Заметка"); add.addItem(withTitle: "Фото с устройства…"); add.addItem(withTitle: "Таймер")
         add.target = self; add.action = #selector(addSelected(_:)); add.setAccessibilityLabel("Добавить")
         func button(_ b: NSButton, _ symbol: String, _ label: String, _ selector: Selector) {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label); b.bezelStyle = .rounded
@@ -102,6 +104,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         if sender.indexOfSelectedItem == 1 { canvasController.createCenteredText() }
         if sender.indexOfSelectedItem == 2 { canvasController.createCenteredNote() }
         if sender.indexOfSelectedItem == 3 { pick(.add(canvasController.images.insertionPoint)) }
+        if sender.indexOfSelectedItem == 4 { canvasController.createCenteredCountdown() }
     }
     @objc private func undoClicked() { finishFields(); state.undo() }
     @objc private func redoClicked() { finishFields(); state.redo() }

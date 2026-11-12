@@ -4,7 +4,7 @@ import AppKit
 final class ScenePresentationController {
     private let store: SceneStore
     private let cache = NSCache<NSString, NSImage>()
-    private var lastPresentation: (scene: EditorSceneModel, content: SceneRenderContent)?
+    private var lastPresentation: (scene: EditorSceneModel, values: [UUID: String], content: SceneRenderContent)?
 
     init(store: SceneStore) {
         self.store = store
@@ -12,13 +12,19 @@ final class ScenePresentationController {
         cache.totalCostLimit = 64*1024*1024
     }
 
-    func content(for scene: EditorSceneModel) -> SceneRenderContent {
-        if let lastPresentation, lastPresentation.scene == scene { return lastPresentation.content }
-        let content = SceneRenderContent(canvasSize: scene.canvasSize, elements: scene.elements.map { element in
+    func content(for scene: EditorSceneModel, catalog: EventCatalogModel = .init(), at now: Date = Date()) -> SceneRenderContent {
+        let values = Dictionary(uniqueKeysWithValues: scene.elements.compactMap { element -> (UUID, String)? in
+            guard element.kind == .countdown, let timer = element.countdown else { return nil }
+            return (element.id, SceneCountdownPresentationController.value(timer, catalog: catalog, at: now))
+        })
+        if let lastPresentation, lastPresentation.scene == scene, lastPresentation.values == values { return lastPresentation.content }
+        let content = SceneRenderContent(canvasSize: scene.canvasSize, elements: scene.elements.map { original in
+            var element = original
+            if element.kind == .countdown { element.text = values[element.id] ?? "0 дней 00:00:00" }
             let box = CGRect(origin: .zero, size: element.frame.size)
             let drawing: SceneRenderDrawing
             switch element.kind {
-            case .text, .note:
+            case .text, .note, .countdown:
                 let y = SceneTextLayout.yOffset(element)
                 let rect = SceneTextLayout.contentRect(element)
                 let text = NSAttributedString(string: element.text,
@@ -40,7 +46,7 @@ final class ScenePresentationController {
             return SceneRenderElement(id: element.id, frame: element.frame, rotation: element.rotation,
                 cornerRadius: element.cornerRadius, opacity: element.opacity, drawing: drawing)
         })
-        lastPresentation = (scene, content)
+        lastPresentation = (scene, values, content)
         return content
     }
 

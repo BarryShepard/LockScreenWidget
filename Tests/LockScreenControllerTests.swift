@@ -501,6 +501,39 @@ private final class FakeSpace: LockScreenSpaceManaging {
         changed.elements = [SceneElementModel(kind: .text, frame: CGRect(x: 5, y: 5, width: 90, height: 30), text: "Live scene")]
         routing.sceneDidChange(changed, store: startup.store)
         assert(created.count == 2 && display.content == ScenePresentationController(store: startup.store).content(for: changed) && display.invalidations > beforeEdit)
+        // Shared clock exercises real scene panel updates without locking the host.
+        let clockNow = Date(timeIntervalSince1970: 1_800_000_000)
+        var timer = SceneElementModel(kind: .countdown, frame: CGRect(x: 0,y: 0,width: 320,height: 80))
+        timer.countdown = SceneCountdownModel(targetDate: clockNow.addingTimeInterval(125), timeZoneID: "UTC")
+        var ticking = EditorSceneModel(canvasSize: size, elements: [timer])
+        routing.sceneDidChange(ticking, store: startup.store)
+        let timerState = SceneEditingStateModel(ticking)
+        let timerCanvas = SceneCanvasController(state: timerState, store: startup.store, catalog: model.catalog, now: clockNow)
+        var stateUpdates = 0; timerState.onUpdate = { _ in stateUpdates += 1 }
+        let commonClock = CountdownController { instant in
+            timerCanvas.refresh(at: instant)
+            routing.refresh(at: instant)
+        }
+        commonClock.refresh(at: clockNow)
+        let dynamicClean = display.invalidations
+        let canvasBefore = timerCanvas.view.renderedContent
+        commonClock.refresh(at: clockNow.addingTimeInterval(1))
+        assert(display.invalidations > dynamicClean && timerCanvas.view.renderedContent != canvasBefore, "One shared second refreshes both timer views")
+        assert(display.content == ScenePresentationController(store: startup.store).content(for: ticking,catalog: model.catalog,at: clockNow.addingTimeInterval(1)), "Overlay uses the supplied shared instant")
+        assert(timerCanvas.view.renderedContent == display.content, "Canvas and actual overlay share identical values")
+        ticking.elements[0].countdown?.showsSeconds = false
+        routing.sceneDidChange(ticking,store: startup.store)
+        routing.refresh(at: clockNow)
+        let minuteClean = display.invalidations
+        routing.refresh(at: clockNow.addingTimeInterval(1))
+        assert(display.invalidations == minuteClean, "Seconds-disabled timer is not dirtied every second")
+        routing.refresh(at: clockNow.addingTimeInterval(6))
+        assert(display.invalidations > minuteClean, "Minute boundary invalidates once")
+        commonClock.refresh(at: clockNow.addingTimeInterval(86400))
+        let exhaustedClean = display.invalidations
+        routing.refresh(at: clockNow.addingTimeInterval(86401))
+        assert(display.invalidations == exhaustedClean && stateUpdates == 0 && !timerState.canUndo, "Wake recomputes expiry; expired ticks add neither invalidation nor scene history")
+        assert(created.count == 2, "Dynamic values never recreate panels")
         routing.sceneDidChange(startup.scene, store: startup.store)
         assert(created[1].contentView is SceneDisplayView, "Empty committed content cannot restore countdown fallback")
         assert(!created[1].canBecomeKey && !created[1].canBecomeMain && created[1].ignoresMouseEvents)

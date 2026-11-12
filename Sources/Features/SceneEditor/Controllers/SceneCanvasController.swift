@@ -6,6 +6,9 @@ final class SceneCanvasController {
     private let state: SceneEditingStateModel
     private let presentationController: ScenePresentationController
     var onPickReplacement: ((UUID) -> Void)?
+    var onEditCountdown: (() -> Void)?
+    private let catalog: EventCatalogModel
+    private var now: Date
     var onPaste: ((NSPasteboard, SceneImageDestination?) -> Bool)?
     var onError: ((String) -> Void)?
     var onRestoreTypedScene: (() -> Void)?
@@ -29,7 +32,8 @@ final class SceneCanvasController {
     private var groupRestriction = false
     private var drop: SceneImageDestination?
 
-    init(state: SceneEditingStateModel, store: SceneStore) {
+    init(state: SceneEditingStateModel, store: SceneStore, catalog: EventCatalogModel = .init(), now: Date = Date()) {
+        self.catalog = catalog; self.now = now
         self.state = state
         view = SceneCanvasView(frame: .zero)
         images = SceneImageController(state: state, store: store)
@@ -97,10 +101,14 @@ final class SceneCanvasController {
         CGRect(x: min(dragStart.x, dragCurrent.x), y: min(dragStart.y, dragCurrent.y),
                width: abs(dragStart.x - dragCurrent.x), height: abs(dragStart.y - dragCurrent.y))
     }
+    func refresh(at now: Date) {
+        self.now = now
+        view.refreshContent(presentationController.content(for: state.scene, catalog: catalog, at: now))
+    }
     func refresh() {
         let selected = state.selected
         var presentation = SceneCanvasPresentation()
-        presentation.content = presentationController.content(for: state.scene)
+        presentation.content = presentationController.content(for: state.scene, catalog: catalog, at: now)
         presentation.selectionOutlines = selected.map(SceneGeometry.corners)
         presentation.selectionBounds = selected.count > 1 ? SceneGeometry.bounds(selected) : nil
         presentation.marquee = original != nil && transform == nil && downID == nil && dragging ? dragRect : nil
@@ -128,6 +136,7 @@ final class SceneCanvasController {
         if event.clickCount == 2, let e = hit {
             state.select([e.id])
             if e.kind.hasEditableText { beginEditing(e, initial: state.value, isNew: false, click: event.locationInWindow) }
+            else if e.kind == .countdown { onEditCountdown?() }
             else { onPickReplacement?(e.id) }
             return
         }
@@ -314,9 +323,23 @@ final class SceneCanvasController {
         var next = initial; next.scene.elements.append(e); next.selection = [e.id]
         state.preview(next); beginEditing(e, initial: initial, isNew: true)
     }
+    func createCenteredCountdown() {
+        finishText()
+        let size = CGSize(width: min(320, state.scene.canvasSize.width), height: min(80, state.scene.canvasSize.height))
+        let point = images.insertionPoint
+        let frame = CGRect(x: max(0, min(point.x-size.width/2, state.scene.canvasSize.width-size.width)),
+                           y: max(0, min(point.y-size.height/2, state.scene.canvasSize.height-size.height)), width: size.width, height: size.height)
+        var e = SceneElementModel(kind: .countdown, frame: frame)
+        e.countdown = SceneCountdownModel(targetDate: now.addingTimeInterval(86400))
+        let initial = state.value
+        var next = initial; next.scene.elements.append(e); next.selection = [e.id]
+        state.preview(next); state.finish(from: initial)
+        onEditCountdown?()
+    }
     private func editSelection() {
         guard state.selected.count == 1, let element = state.selected.first else { return }
         if element.kind.hasEditableText { beginEditing(element, initial: state.value, isNew: false) }
+        else if element.kind == .countdown { onEditCountdown?() }
         else { onPickReplacement?(element.id) }
     }
     private func keyDown(_ event: NSEvent) -> Bool {

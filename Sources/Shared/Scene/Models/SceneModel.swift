@@ -1,9 +1,9 @@
 import Foundation
 
 enum SceneElementKind: String, Codable {
-    case text, image, note
+    case text, image, note, countdown
     var hasEditableText: Bool { self == .text || self == .note }
-    var hasTypography: Bool { hasEditableText }
+    var hasTypography: Bool { hasEditableText || self == .countdown }
     var isImage: Bool { self == .image }
 }
 
@@ -60,6 +60,7 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
     var textScaleX: Double? = nil
     var textScaleY: Double? = nil
     var style: SceneTextStyleModel
+    var countdown: SceneCountdownModel? = nil
     var note: SceneNoteModel? = nil
     var resolvedNote: SceneNoteModel { note ?? SceneNoteModel() }
     var assetID: String?
@@ -72,7 +73,7 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
          assetID: String? = nil, imageRect: CGRect? = nil) {
         self.id = id
         self.kind = kind
-        self.name = name ?? (kind == .text ? "Текст" : kind == .note ? "Заметка" : "Изображение")
+        self.name = name ?? (kind == .text ? "Текст" : kind == .note ? "Заметка" : kind == .countdown ? "Таймер" : "Изображение")
         self.frame = frame
         self.rotation = rotation
         self.cornerRadius = cornerRadius ?? (kind == .note ? 12 : 0)
@@ -85,6 +86,7 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
         }
         self.assetID = assetID
         self.imageRect = imageRect
+        if kind == .countdown { self.countdown = SceneCountdownModel() }
     }
 }
 
@@ -124,6 +126,15 @@ struct EditorSceneModel: Codable, Equatable {
                       [note.background.red, note.background.green, note.background.blue, note.background.alpha]
                         .allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
                     throw SceneError.invalid("У заметки некорректный фон или отступ.")
+                }
+            }
+            if element.kind == .countdown && element.countdown == nil {
+                throw SceneError.invalid("У таймера отсутствуют параметры отсчёта.")
+            }
+            if let timer = element.countdown {
+                guard timer.targetDate.timeIntervalSinceReferenceDate.isFinite,
+                      TimeZone(identifier: timer.timeZoneID) != nil else {
+                    throw SceneError.invalid("У таймера некорректная дата или часовой пояс.")
                 }
             }
             let style = element.style
