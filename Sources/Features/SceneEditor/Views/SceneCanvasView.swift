@@ -79,7 +79,6 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     private var presentation = SceneCanvasPresentation()
     private var input: SceneInputView?
     private var inputContainer: SceneTextContainerView?
-    private var inputScale: CGFloat = 1
     var viewport: SceneViewport {
         SceneViewport(size: presentation.content.canvasSize, in: bounds.insetBy(dx: 22, dy: 22))
     }
@@ -199,7 +198,6 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         field.textStorage?.setAttributes(presentation.attributes, range: NSRange(location: 0, length: (text as NSString).length))
         field.typingAttributes = presentation.attributes
         field.insertionPointColor = presentation.color
-        inputScale = viewport.scale
         input = field
         let container = SceneTextContainerView(frame: .zero)
         inputContainer = container
@@ -215,18 +213,13 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     func updateText(_ presentation: SceneTextInputPresentation) {
         guard let input else { return }
         let viewport = viewport
-        if abs(viewport.scale - inputScale) > 0.0001 && !input.hasMarkedText() {
-            input.textStorage?.setAttributes(presentation.attributes, range: NSRange(location: 0, length: (input.string as NSString).length))
-            input.typingAttributes = presentation.attributes
-            inputScale = viewport.scale
-        }
         guard let container = inputContainer else { return }
         container.frameCenterRotation = 0
         container.frame = viewport.viewRect(presentation.frame)
-        let logicalSize = CGSize(width: container.frame.width / presentation.scaleX, height: container.frame.height / presentation.scaleY)
+        let logicalSize = CGSize(width: presentation.frame.width / presentation.scaleX, height: presentation.frame.height / presentation.scaleY)
         container.bounds = CGRect(origin: .zero, size: logicalSize)
         input.frame = CGRect(origin: .zero, size: logicalSize)
-        input.textContainerInset = CGSize(width: 0, height: presentation.yOffset * viewport.scale)
+        input.textContainerInset = CGSize(width: 0, height: presentation.yOffset)
         container.frameCenterRotation = presentation.rotation
         // AppKit adjusts the frame origin when bounds scale or rotation changes.
         // Anchor the transformed local center to the renderer’s scene center.

@@ -186,7 +186,7 @@ final class SceneCanvasController {
         SceneTextInputPresentation(frame: element.frame, rotation: element.rotation, opacity: element.opacity,
                                    scaleX: element.textScaleX ?? 1, scaleY: element.textScaleY ?? 1,
                                    yOffset: SceneTextLayout.yOffset(element),
-                                   attributes: SceneTextLayout.attributes(element.style, scale: view.viewport.scale),
+                                   attributes: SceneTextLayout.attributes(element.style),
                                    color: SceneTextLayout.color(element.style.color))
     }
     private func beginEditing(_ element: SceneElementModel, initial: SceneSnapshot, isNew: Bool, click: CGPoint? = nil) {

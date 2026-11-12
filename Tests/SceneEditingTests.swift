@@ -138,6 +138,31 @@ import AppKit
         }
         withExtendedLifetime(controller) {}
     }
+    static func savedTextWrapping(_ store: SceneStore) {
+        var e = SceneElementModel(kind: .text, frame: CGRect(x: 756, y: 491, width: 391.07016300621444, height: 70.42969760301493), text: " Transform test")
+        e.textScaleX = 1.8534130948161822; e.textScaleY = 1.8534130948161822; e.autoTextWidth = true
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: CGSize(width: 1512, height: 982), elements: [e])); state.select([e.id])
+        let controller = SceneCanvasController(state: state, store: store); let canvas = controller.view
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas; canvas.editSelection()
+        func descendants(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(descendants) }
+        guard let input = descendants(canvas).compactMap({ $0 as? NSTextView }).first, let layout = input.layoutManager, let container = input.textContainer else { fatalError("Missing input") }
+        layout.ensureLayout(for: container)
+        let glyphs = layout.glyphRange(for: container)
+        var lines = 0
+        layout.enumerateLineFragments(forGlyphRange: glyphs) { _, _, _, _, _ in lines += 1 }
+        check(lines == 1 && glyphs.length == (e.text as NSString).length, "Saved auto-width text lays out all glyphs on one line")
+        let insertion = input.firstRect(forCharacterRange: NSRange(location: (e.text as NSString).length, length: 0), actualRange: nil)
+        let localInsertion = input.convert(window.convertFromScreen(insertion), from: nil)
+        check(localInsertion.minX >= input.bounds.minX-0.01 && localInsertion.maxX <= input.bounds.maxX+0.01 &&
+              localInsertion.minY >= input.bounds.minY-0.01 && localInsertion.maxY <= input.bounds.maxY+0.01, "End caret remains inside input frame")
+        window.setContentSize(CGSize(width: 1100, height: 700)); canvas.layout()
+        layout.ensureLayout(for: container)
+        var resizedLines = 0
+        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, _, _, _, _ in resizedLines += 1 }
+        check(resizedLines == 1, "Viewport resize does not change text wrapping")
+        canvas.finishText(); withExtendedLifetime(controller) {}
+    }
     static func nativeTransformGestures(_ store: SceneStore) {
         var e = item(100); e.text = "Transform test"; e.frame.size.height = 38
         let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [e])); state.select([e.id])
@@ -619,6 +644,7 @@ import AppKit
         geometryAndHistory()
         transforms()
         transformedTextInput(store)
+        savedTextWrapping(store)
         nativeTransformGestures(store)
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
