@@ -96,6 +96,7 @@ private final class FakeSpace: LockScreenSpaceManaging {
         let console = kCGSessionOnConsoleKey as String
         assert(decodeSessionState(nil) == .unknown)
         assert(decodeSessionState([console: true]) == .activeWithoutLockFlag)
+        assert(decodeSessionState([console: true, "CGSSessionScreenIsLocked": "invalid"]) == .unknown)
         assert(decodeSessionState([console: false]) == .inactive)
         assert(decodeSessionState([console: true, "CGSSessionScreenIsLocked": true]) == .locked)
         assert(decodeSessionState([console: true, "CGSSessionScreenIsLocked": false]) == .unlocked)
@@ -155,6 +156,7 @@ private final class FakeSpace: LockScreenSpaceManaging {
         var factoryAttempts = 0
         var failures: [FakeSpace] = []
         var retries = 0
+        var diagnostics: [String] = []
         let retryController = LockScreenController(model: model, readLockState: { .locked }, makeSpace: {
             factoryAttempts += 1
             if factoryAttempts == 1 { return nil }
@@ -162,7 +164,7 @@ private final class FakeSpace: LockScreenSpaceManaging {
             next.succeeds = factoryAttempts > 2
             failures.append(next)
             return next
-        }, diagnostic: { _ in }, makePanels: {
+        }, diagnostic: { diagnostics.append($0) }, makePanels: {
             retries += 1
             return [privatePanel()]
         }, scheduleAfter: { _, _ in })
@@ -176,6 +178,34 @@ private final class FakeSpace: LockScreenSpaceManaging {
         assert(factoryAttempts == 3 && retries == 3 && failures[1].attachments == 1)
         retryController.stop()
         assert(failures[1].teardowns == 1)
+        let diagnosticsAfterStop = diagnostics.count
+        retryController.refresh(at: retryAt.addingTimeInterval(30))
+        assert(factoryAttempts == 3 && retries == 3 && diagnostics.count == diagnosticsAfterStop, "Stopped controller must not recover panels or emit heartbeat")
+
+        var session: LockSessionState = .unlocked
+        var completions: [PanelTestCompletion] = []
+        let restoration = LockScreenController(model: model, readLockState: { session }, makeSpace: { assertionFailure("No private space expected"); return nil }, diagnostic: { _ in }, makePanels: { [privatePanel()] }, scheduleAfter: { _, _ in })
+        restoration.onTestDidEnd = { completions.append($0) }
+        restoration.start()
+        restoration.testPanel()
+        session = .inactive
+        _ = restoration.perform(NSSelectorFromString("sessionResigned"))
+        assert(completions == [.deferEditor])
+        session = .unknown
+        _ = restoration.perform(NSSelectorFromString("screenWake"))
+        assert(completions == [.deferEditor], "Unknown wake must not restore")
+        session = .unlocked
+        _ = restoration.perform(NSSelectorFromString("screenWake"))
+        assert(completions == [.deferEditor, .restoreEditor])
+        restoration.testPanel()
+        session = .inactive
+        _ = restoration.perform(NSSelectorFromString("sessionResigned"))
+        session = .activeWithoutLockFlag
+        restoration.refresh(at: retryAt)
+        assert(completions.last == .deferEditor)
+        restoration.refresh(at: retryAt.addingTimeInterval(1))
+        assert(completions.last == .restoreEditor, "Confirmed missing lock flag restores deferred editor")
+        restoration.stop()
     }
 
     static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }

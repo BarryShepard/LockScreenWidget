@@ -37,6 +37,7 @@ final class LockScreenController: NSObject {
     private var locked = false
     private var observing = false
     private var testingPanel = false
+    private var editorRestorationPending = false
     private var testGeneration = 0
     private(set) var currentDisplay = CountdownDisplayModel()
     var onEnabledChange: (() -> Void)?
@@ -102,6 +103,7 @@ final class LockScreenController: NSObject {
 
     func refresh(at now: Date) {
         currentDisplay = makeCountdownDisplay(event: selectNextEvent(in: model.catalog, now: now), now: now)
+        guard observing else { return }
         reconcile(readLockState(), source: "poll", at: now)
         if locked && !suspended && model.isEnabled && panels.isEmpty &&
             (lastRetry == nil || now.timeIntervalSince(lastRetry!) >= 2 || now < lastRetry!) {
@@ -203,7 +205,7 @@ final class LockScreenController: NSObject {
         case .activeWithoutLockFlag:
             // A missing private key is also the normal unlocked representation on
             // some systems. Require consecutive polls before treating it as such.
-            guard source == "poll", locked || suspended else { return }
+            guard source == "poll", locked || suspended || editorRestorationPending else { return }
             missingLockFlagPolls += 1
             guard missingLockFlagPolls >= 2 else { return }
             reconcile(.unlocked, source: "missing-lock-flag-confirmed", at: now)
@@ -216,7 +218,7 @@ final class LockScreenController: NSObject {
                 updatePanels(at: now)
             }
         case .unlocked, .inactive:
-            let changed = locked || suspended || (state == .inactive && testingPanel)
+            let changed = locked || suspended || (state == .inactive && testingPanel) || (state == .unlocked && editorRestorationPending)
             locked = false
             suspended = false
             if changed {
@@ -252,6 +254,7 @@ final class LockScreenController: NSObject {
     private func cancelPanelTest(completion: PanelTestCompletion) {
         testGeneration += 1
         testingPanel = false
+        editorRestorationPending = completion == .deferEditor
         onTestDidEnd?(completion)
     }
 
