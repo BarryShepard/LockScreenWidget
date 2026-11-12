@@ -7,6 +7,15 @@ import AppKit
         SceneElementModel(kind: .text, frame: CGRect(x: x,y: 100,width: 100,height: 20))
     }
     static func geometryAndHistory() {
+        let guarded = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [item(10)]))
+        let guardedStart = guarded.value
+        var first = guardedStart; first.scene.elements[0].frame.origin.x += 10; guarded.preview(first)
+        let firstID = guarded.finish(from: guardedStart)!
+        var second = first; second.scene.elements[0].opacity = 0.5; guarded.preview(second)
+        let secondID = guarded.finish(from: first)!
+        check(!guarded.undoEntry(firstID) && guarded.value == second, "A width history ID cannot consume a newer unrelated entry")
+        check(guarded.undoEntry(secondID) && guarded.undoEntry(firstID) && guarded.value == guardedStart, "History IDs move only their own entries")
+        check(!guarded.redoEntry(secondID) && guarded.value == guardedStart, "Redo IDs also enforce chronology")
         var a = item(100); a.rotation = 45
         let b = item(300), c = item(500), d = item(650)
         let model = SceneEditingStateModel(EditorSceneModel(canvasSize: size,elements: [a,b,c,d]))
@@ -208,7 +217,7 @@ import AppKit
         withExtendedLifetime((controller, imageController)) {}
     }
     static func nativeWidthUndoOrdering(_ store: SceneStore) {
-        var e = item(100); e.text = "base"; e.frame.size.height = 38
+        var e = item(100); e.text = "base"; e.frame.size.height = 100
         let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [e])); state.select([e.id])
         let controller = SceneCanvasController(state: state, store: store), canvas = controller.view
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544), styleMask: .borderless, backing: .buffered, defer: false)
@@ -225,21 +234,23 @@ import AppKit
             input.mouseDown(with: event(.leftMouseDown, 0)); input.mouseDragged(with: event(.leftMouseDragged, amount)); input.mouseUp(with: event(.leftMouseUp, amount)); flush()
         }
         func command(_ name: String) { _ = input.perform(NSSelectorFromString(name), with: nil); flush() }
-        type("A"); check(state.scene.elements[0].text == "baseA", "Typed before resize")
-        drag(30); let width1 = state.scene.elements[0].frame.width
-        drag(20); let width2 = state.scene.elements[0].frame.width
-        type("B"); check(state.scene.elements[0].text == "baseAB", "Typed after resize")
-        command("undo:"); check(state.scene.elements[0].text == "baseA" && state.scene.elements[0].frame.width == width2, "Native undo removes later typing first")
-        command("undo:"); check(state.scene.elements[0].frame.width == width1 && state.scene.elements[0].text == "baseA", "Native undo reverts second width")
-        command("undo:"); check(state.scene.elements[0].frame.width == e.frame.width && state.scene.elements[0].text == "baseA", "Native undo reverts first width")
-        command("undo:"); check(state.scene.elements[0].text == "base", "Native undo reverts earlier typing")
-        command("redo:"); command("redo:"); command("redo:"); command("redo:")
-        check(state.scene.elements[0].frame.width == width2 && state.scene.elements[0].text == "baseAB", "Native redo restores chronological sequence")
-        canvas.finishText(); state.undo()
-        check(state.scene.elements[0].frame.width == width2 && state.scene.elements[0].text == "baseA", "Scene undo after finish reverts last typing once")
-        state.undo(); check(state.scene.elements[0].frame.width == width1, "Scene undo after finish reverts second width once")
-        state.undo(); check(state.scene.elements[0].frame.width == e.frame.width, "Scene undo after finish reverts first width once")
-        state.undo(); check(state.scene.elements[0].text == "base" && !state.canUndo, "Scene undo after finish reverts earlier typing once")
+        type("A"); let typedA = state.value
+        drag(30); let firstWidth = state.value
+        type("B"); let typedB = state.value
+        drag(20); let secondWidth = state.value
+        check(firstWidth.scene.elements[0].frame.width == 130 && firstWidth.scene.elements[0].frame.height < 100 &&
+              typedB.scene.elements[0].frame.height == 100 && secondWidth.scene.elements[0].frame.width == 150,
+              "Tall frame reproduces interleaved text and width checkpoints")
+        for (snapshot, message) in [(typedB, "second width"), (firstWidth, "interleaved typing"), (typedA, "first width")] {
+            command("undo:"); check(state.value == snapshot, "Native undo restores \(message) checkpoint")
+        }
+        command("undo:"); check(state.scene.elements[0] == e, "Native undo restores original text and geometry")
+        for (snapshot, message) in [(typedA, "first typing"), (firstWidth, "first width"), (typedB, "second typing"), (secondWidth, "second width")] {
+            command("redo:"); check(state.value == snapshot, "Native redo restores \(message) checkpoint")
+        }
+        canvas.finishText()
+        for snapshot in [typedB, firstWidth, typedA] { state.undo(); check(state.value == snapshot, "Scene undo restores each checkpoint exactly once") }
+        state.undo(); check(state.scene.elements[0] == e && !state.canUndo, "Scene undo restores original without duplicate history")
         canvas.editSelection()
         guard let secondInput = descendants(canvas).compactMap({ $0 as? NSTextView }).first else { fatalError("Missing reentered input") }
         let point = canvas.convert(CGPoint(x: secondInput.bounds.maxX-1, y: secondInput.bounds.midY), from: secondInput)

@@ -37,7 +37,8 @@ struct SceneSnapshot: Equatable {
 
 final class SceneEditingStateModel {
     private(set) var value: SceneSnapshot
-    private var past = [SceneSnapshot](), future = [SceneSnapshot]()
+    private struct HistoryEntry { let id: UUID; let snapshot: SceneSnapshot }
+    private var past = [HistoryEntry](), future = [HistoryEntry]()
     var onUpdate: ((SceneUpdate) -> Void)?
     var scene: EditorSceneModel { value.scene }
     var selection: Set<UUID> { value.selection }
@@ -63,35 +64,53 @@ final class SceneEditingStateModel {
         value = next
         onUpdate?(typing ? .typing : .preview)
     }
-    func finish(from initial: SceneSnapshot) {
+    @discardableResult
+    func finish(from initial: SceneSnapshot) -> UUID? {
         if value.scene != initial.scene {
-            past.append(initial)
+            let id = UUID()
+            past.append(HistoryEntry(id: id, snapshot: initial))
             if past.count > 150 { past.removeFirst() }
             future.removeAll()
             onUpdate?(.committed)
-        } else { onUpdate?(.selection) }
+            return id
+        }
+        onUpdate?(.selection)
+        return nil
     }
     func change(_ edit: (inout SceneSnapshot) -> Void) {
         let initial = value
         edit(&value)
         finish(from: initial)
     }
-    func undo() {
-        guard let previous = past.popLast() else { return }
-        future.append(value); value = previous; onUpdate?(.committed)
+    func undo() { _ = undoEntry(nil) }
+    func redo() { _ = redoEntry(nil) }
+    @discardableResult
+    func undoEntry(_ id: UUID?) -> Bool {
+        guard let previous = past.last, id == nil || previous.id == id else { return false }
+        past.removeLast()
+        future.append(HistoryEntry(id: previous.id, snapshot: value))
+        value = previous.snapshot; onUpdate?(.committed)
+        return true
     }
-    func redo() {
-        guard let next = future.popLast() else { return }
-        past.append(value); value = next; onUpdate?(.committed)
+    @discardableResult
+    func redoEntry(_ id: UUID?) -> Bool {
+        guard let next = future.last, id == nil || next.id == id else { return false }
+        future.removeLast()
+        past.append(HistoryEntry(id: next.id, snapshot: value))
+        value = next.snapshot; onUpdate?(.committed)
+        return true
     }
-    /// Native text undo can cross a scene checkpoint already committed during editing.
-    func reconcileTextHistory(from before: SceneSnapshot, undo: Bool) -> Bool {
+    /// Cross an existing typing checkpoint only after its non-derived fields are verified.
+    func reconcileTextHistory(from before: SceneSnapshot, undo: Bool,
+                              matches: (SceneSnapshot, SceneSnapshot) -> Bool) -> Bool {
         guard before.scene != value.scene else { return false }
-        if undo, let previous = past.last, previous.scene == value.scene {
-            past.removeLast(); future.append(before); return true
+        if undo, let previous = past.last, matches(previous.snapshot, value) {
+            past.removeLast(); future.append(HistoryEntry(id: previous.id, snapshot: before))
+            value = previous.snapshot; onUpdate?(.committed); return true
         }
-        if !undo, let next = future.last, next.scene == value.scene {
-            future.removeLast(); past.append(before); return true
+        if !undo, let next = future.last, matches(next.snapshot, value) {
+            future.removeLast(); past.append(HistoryEntry(id: next.id, snapshot: before))
+            value = next.snapshot; onUpdate?(.committed); return true
         }
         return false
     }

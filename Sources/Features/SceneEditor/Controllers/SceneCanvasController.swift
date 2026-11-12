@@ -55,8 +55,19 @@ final class SceneCanvasController {
         view.onTextHistoryEnd = { [weak self] undo in
             guard let self, let before = self.historyBefore else { return }
             self.historyBefore = nil
-            if !self.widthHistoryHandled && self.state.reconcileTextHistory(from: before, undo: undo) {
+            if !self.widthHistoryHandled, let id = self.editingID,
+               self.state.reconcileTextHistory(from: before, undo: undo, matches: { expected, actual in
+                   guard let index = actual.scene.elements.firstIndex(where: { $0.id == id }),
+                         actual.scene.elements[index].kind == .text else { return false }
+                   var fitted = actual.scene.elements[index]
+                   SceneTextLayout.fit(&fitted, minimumHeight: self.minimumHeight)
+                   guard fitted.frame.height == actual.scene.elements[index].frame.height else { return false }
+                   var normalized = actual
+                   normalized.scene.elements[index].frame.size.height = expected.scene.elements.first(where: { $0.id == id })?.frame.height ?? -1
+                   return normalized == expected
+               }) {
                 self.initialText = self.state.value
+                self.refresh()
             }
         }
         view.onTextWidthGesture = { [weak self] event, side, phase in self?.textWidthGesture(event, side: side, phase: phase) }
@@ -241,12 +252,13 @@ final class SceneCanvasController {
         SceneTextLayout.fit(&next.scene.elements[index], minimumHeight: 1)
         state.preview(next)
         if phase == 2 {
-            state.finish(from: start); initialText = state.value; widthStart = nil
-            if state.scene != start.scene {
+            let historyID = state.finish(from: start); initialText = state.value; widthStart = nil
+            if let historyID {
                 view.registerTextWidthHistory { [weak self] undo in
                     guard let self else { return }
                     self.widthHistoryHandled = true
-                    if undo { self.state.undo() } else { self.state.redo() }
+                    let applied = undo ? self.state.undoEntry(historyID) : self.state.redoEntry(historyID)
+                    guard applied else { return }
                     self.initialText = self.state.value
                     self.refresh()
                 }
