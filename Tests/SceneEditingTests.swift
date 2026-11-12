@@ -319,6 +319,69 @@ import AppKit
         canvas.finishText(); state.undo(); check(state.value == typed, "Scene undo restores note width once")
         withExtendedLifetime(controller) {}
     }
+    static func noteClippingAndCreation(_ store: SceneStore) {
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size))
+        let controller = SceneCanvasController(state: state, store: store), canvas = controller.view
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 500), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas
+        func descendants(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(descendants) }
+        func input() -> NSTextView { descendants(canvas).compactMap { $0 as? NSTextView }.first! }
+        func flush() { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01)) }
+        func event(_ type: NSEvent.EventType, _ x: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: 200), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        controller.createCenteredNote(); input().insertText("A", replacementRange: input().selectedRange()); flush()
+        canvas.onTextWidthGesture?(event(.leftMouseDown, 500), 1, 0)
+        canvas.onTextWidthGesture?(event(.leftMouseUp, 500), 1, 2)
+        check(!state.canUndo, "Zero movement does not commit provisional creation")
+        input().insertText("", replacementRange: NSRange(location: 0, length: 1)); flush(); controller.finishText()
+        check(state.scene.elements.isEmpty && !state.canUndo, "Cleared provisional note disappears")
+        controller.createCenteredNote(); input().insertText("A", replacementRange: input().selectedRange()); flush()
+        canvas.onTextWidthGesture?(event(.leftMouseDown, 500), 1, 0)
+        canvas.onTextWidthGesture?(event(.leftMouseDragged, 530), 1, 1)
+        canvas.onTextWidthGesture?(event(.leftMouseUp, 530), 1, 2)
+        let resized = state.value
+        input().insertText("", replacementRange: NSRange(location: 0, length: 1)); flush(); controller.finishText()
+        check(state.scene.elements.count == 1 && state.scene.elements[0].text.isEmpty, "Committed note remains after clearing")
+        let cleared = state.value
+        state.undo(); check(state.value == resized, "Undo clearing restores committed note")
+        state.redo(); check(state.value == cleared, "Redo clearing retains empty note")
+        var note = SceneElementModel(kind: .note, frame: CGRect(x: 100, y: 100, width: 320, height: 60), text: "AAAA\nBBBB\nCCCC\nDDDD")
+        for angle in [0.0, 30.0] {
+            note.rotation = angle
+            state.change { $0.scene.elements = [note]; $0.selection = [note.id] }; canvas.editSelection()
+            let field = input(); field.layoutManager!.ensureLayout(for: field.textContainer!)
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 60, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: NSGraphicsContext(bitmapImageRep: rep)!.cgContext, flipped: true)
+            field.draw(field.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+            let sx: CGFloat = 1, sy: CGFloat = 1
+            func ink(_ row: Int) -> Int { (Int(20*sx)..<Int(100*sx)).filter { x in
+                guard let c = rep.colorAt(x: x, y: row)?.usingColorSpace(.deviceRGB) else { return false }
+                return c.alphaComponent > 0.5 && c.redComponent < 0.5 && c.greenComponent < 0.5 && c.blueComponent < 0.5
+            }.count }
+            check((Int(16*sy)..<Int(43*sy)).contains { ink($0) > 0 } && (Int(ceil(45*sy))..<rep.pixelsHigh).allSatisfy { ink($0) == 0 }, "Native glyphs clip to padded content at rotation \(angle)")
+            canvas.finishText()
+        }
+        let board = NSPasteboard(name: NSPasteboard.Name("note-test-" + UUID().uuidString))
+        defer { board.releaseGlobally() }
+        note.note = SceneNoteModel(background: SceneColor(red: 0.1, green: 0.2, blue: 0.3, alpha: 0.4), padding: 23)
+        check((try? SceneTransfer.write([note], to: board)) == true, "Copy note to private pasteboard")
+        guard case let .layers(copied)? = try? SceneTransfer.read(board) else { fatalError("Missing copied note") }
+        check(copied == [note], "Copy preserves note payload and style")
+        state.change { $0.scene.elements = [note]; $0.selection = [note.id] }
+        let beforeDuplicate = state.value
+        state.insertCopies([note]); let duplicated = state.value
+        check(duplicated.scene.elements.count == 2 && duplicated.scene.elements[1].note == note.note && duplicated.scene.elements[1].style == note.style, "Duplicate preserves note payload")
+        state.undo(); check(state.value == beforeDuplicate, "Undo note duplication")
+        state.redo(); check(state.value == duplicated, "Redo note duplication")
+        controller.createCenteredNote(); input().setMarkedText("ж", selectedRange: NSRange(location: 1, length: 0), replacementRange: input().selectedRange())
+        check(input().hasMarkedText(), "Note accepts marked text")
+        let count = state.scene.elements.count; controller.finishText()
+        check(state.scene.elements.count == count-1, "Uncommitted marked-only note is discarded")
+        withExtendedLifetime(controller) {}
+    }
     static func cancelCanvasDrag(_ store: SceneStore, duplicate: Bool) {
         _ = NSApplication.shared
         let first = item(50), second = item(300)
@@ -760,6 +823,7 @@ import AppKit
         nativeTransformGestures(store)
         nativeWidthUndoOrdering(store)
         nativeNote(store)
+        noteClippingAndCreation(store)
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
         shiftGestures(store)

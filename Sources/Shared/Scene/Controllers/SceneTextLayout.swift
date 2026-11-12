@@ -48,7 +48,7 @@ enum SceneTextLayout {
     }
 
     static func contentRect(_ e: SceneElementModel) -> CGRect {
-        let p = e.kind == .note ? min(e.resolvedNote.padding, e.frame.width / 2, e.frame.height / 2) : 0
+        let p = e.kind == .note ? e.resolvedNote.padding : 0
         return CGRect(x: p, y: p, width: max(0, e.frame.width - 2*p), height: max(0, e.frame.height - 2*p))
     }
 

@@ -111,6 +111,12 @@ import AppKit
         let fixed = note.frame; SceneTextLayout.fit(&note)
         check(note.frame == fixed && SceneTextLayout.overflows(note), "Typing keeps the note frame and reports overflow")
         note.text = "short"; check(!SceneTextLayout.overflows(note))
+        note.note = SceneNoteModel(); note.frame.size = CGSize(width: 320, height: 20)
+        check(SceneTextLayout.contentRect(note) == CGRect(x: 16, y: 16, width: 288, height: 0))
+        note.frame.size = CGSize(width: 20, height: 320)
+        check(SceneTextLayout.contentRect(note) == CGRect(x: 16, y: 16, width: 0, height: 288))
+        note.frame.size = CGSize(width: 320, height: 200)
+        check(SceneTextLayout.contentRect(note) == CGRect(x: 16, y: 16, width: 288, height: 168))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)

@@ -4,6 +4,14 @@ private final class SceneInputView: NSTextView {
     var onWidthGesture: ((NSEvent, Int, Int) -> Void)?
     var onHistoryStart: (() -> Void)?
     var onHistoryEnd: ((Bool, Bool) -> Void)?
+    var contentClip: CGRect?
+    override func draw(_ dirtyRect: NSRect) {
+        guard let contentClip else { super.draw(dirtyRect); return }
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: contentClip).addClip()
+        super.draw(dirtyRect)
+        NSGraphicsContext.restoreGraphicsState()
+    }
     private var widthSide = 0
     func cancelWidthGesture() { widthSide = 0 }
     override func mouseDown(with event: NSEvent) {
@@ -71,6 +79,7 @@ struct SceneTextInputPresentation {
     let scaleX: CGFloat, scaleY: CGFloat
     let yOffset: CGFloat
     var xInset: CGFloat = 0
+    var contentClip: CGRect? = nil
     let attributes: [NSAttributedString.Key: Any]
     let color: NSColor
 }
@@ -243,6 +252,8 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         container.bounds = CGRect(origin: .zero, size: logicalSize)
         input.frame = CGRect(origin: .zero, size: logicalSize)
         input.textContainerInset = CGSize(width: presentation.xInset, height: presentation.yOffset)
+        input.contentClip = presentation.contentClip
+        input.needsDisplay = true
         container.frameCenterRotation = presentation.rotation
         // AppKit adjusts the frame origin when bounds scale or rotation changes.
         // Anchor the transformed local center to the renderer’s scene center.

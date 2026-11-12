@@ -24,6 +24,7 @@ final class SceneCanvasController {
     private var historyBefore: SceneSnapshot?
     private var widthHistoryHandled = false
     private var widthStart: SceneSnapshot?
+    private var widthCheckpointed = false
     private var widthPoint = CGPoint.zero
     private var groupRestriction = false
     private var drop: SceneImageDestination?
@@ -210,6 +211,7 @@ final class SceneCanvasController {
                                    scaleX: element.textScaleX ?? 1, scaleY: element.textScaleY ?? 1,
                                    yOffset: SceneTextLayout.yOffset(element),
                                    xInset: SceneTextLayout.contentRect(element).minX,
+                                   contentClip: element.kind == .note ? SceneTextLayout.contentRect(element) : nil,
                                    attributes: SceneTextLayout.attributes(element.style),
                                    color: SceneTextLayout.color(element.style.color))
     }
@@ -229,8 +231,7 @@ final class SceneCanvasController {
     private func textWidthGesture(_ event: NSEvent, side: Int, phase: Int) {
         guard let id = editingID else { return }
         if phase == 0 {
-            if let initial = initialText { state.finish(from: initial) }
-            initialText = state.value; typed = false
+            widthCheckpointed = false
             widthStart = state.value; widthPoint = view.scenePoint(event.locationInWindow)
             return
         }
@@ -240,8 +241,12 @@ final class SceneCanvasController {
         let delta = SceneTransformController.rotate(CGPoint(x: point.x-widthPoint.x, y: point.y-widthPoint.y), -element.rotation * .pi/180).x
         if abs(delta) < 0.0001 {
             state.preview(start)
-            if phase == 2 { widthStart = nil; initialText = state.value }
+            if phase == 2 { widthStart = nil; if widthCheckpointed { initialText = state.value } }
             refresh(); return
+        }
+        if !widthCheckpointed {
+            if let initial = initialText, state.finish(from: initial) != nil { newText = false }
+            initialText = state.value; typed = false; widthCheckpointed = true
         }
         let width = max(12, element.frame.width + CGFloat(side)*delta)
         let shift = SceneTransformController.rotate(CGPoint(x: CGFloat(side)*(width-element.frame.width)/2, y: 0), element.rotation * .pi/180)
