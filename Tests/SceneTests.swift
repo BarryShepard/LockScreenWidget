@@ -93,6 +93,24 @@ import AppKit
     }
 
     static func main() throws {
+        var note = SceneElementModel(kind: .note, frame: CGRect(x: 20, y: 30, width: 320, height: 200))
+        check(note.name == "Заметка" && note.style.fontSize == 24 && note.cornerRadius == 12)
+        check(note.resolvedNote.padding == 16 && SceneTextLayout.contentRect(note) == CGRect(x: 16, y: 16, width: 288, height: 168))
+        let noteScene = EditorSceneModel(canvasSize: CGSize(width: 500, height: 500), elements: [note])
+        let encoded = try JSONEncoder().encode(noteScene)
+        let decoded = try JSONDecoder().decode(EditorSceneModel.self, from: encoded).validated()
+        check(decoded == noteScene && decoded.elements[0].note == nil, "Absent payload resolves to defaults")
+        note.note = SceneNoteModel(background: SceneColor(red: 0.2, green: 0.3, blue: 0.4, alpha: 0.5), padding: 12)
+        let custom = EditorSceneModel(canvasSize: noteScene.canvasSize, elements: [note])
+        check(try JSONDecoder().decode(EditorSceneModel.self, from: JSONEncoder().encode(custom)).validated() == custom)
+        var invalid = custom; invalid.elements[0].note?.padding = -1
+        expectFailure { _ = try invalid.validated() }
+        invalid = custom; invalid.elements[0].note?.background.red = 2
+        expectFailure { _ = try invalid.validated() }
+        note.text = String(repeating: "long text ", count: 200)
+        let fixed = note.frame; SceneTextLayout.fit(&note)
+        check(note.frame == fixed && SceneTextLayout.overflows(note), "Typing keeps the note frame and reports overflow")
+        note.text = "short"; check(!SceneTextLayout.overflows(note))
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)

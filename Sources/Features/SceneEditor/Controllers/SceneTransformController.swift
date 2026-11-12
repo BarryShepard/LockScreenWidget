@@ -99,7 +99,7 @@ enum SceneTransformController {
         }
         var sx = h.x == 0 ? 1 : (f.width + CGFloat(h.x)*delta.x)/f.width
         var sy = h.y == 0 ? 1 : (f.height + CGFloat(h.y)*delta.y)/f.height
-        if !stretch || single == nil {
+        if (!stretch || single == nil) && !(single?.kind == .note && h.y == 0) {
             let s: CGFloat
             if h.x == 0 { s = sy } else if h.y == 0 { s = sx }
             else { s = 1 + ((sx-1)*f.width*f.width + (sy-1)*f.height*f.height)/(f.width*f.width+f.height*f.height) }
@@ -118,7 +118,7 @@ enum SceneTransformController {
             let width = e.frame.width*sx, height = e.frame.height*sy
             e.frame = CGRect(x: newCenter.x+offset.x*sx-width/2, y: newCenter.y+offset.y*sy-height/2, width: width, height: height)
             if let image = e.imageRect { e.imageRect = CGRect(x: image.minX*sx, y: image.minY*sy, width: image.width*sx, height: image.height*sy) }
-            e.cornerRadius *= min(sx, sy)
+            if e.kind != .note { e.cornerRadius *= min(sx, sy) }
             if e.kind == .text { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
             result.scene.elements[i] = e
         }

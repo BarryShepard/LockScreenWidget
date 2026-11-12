@@ -65,7 +65,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         let root = NSView(); window.contentView = root
         let bar = NSStackView(); bar.spacing = 8; bar.translatesAutoresizingMaskIntoConstraints = false
         let add = NSPopUpButton(frame: .zero, pullsDown: true)
-        add.addItem(withTitle: "Добавить"); add.addItem(withTitle: "Текст"); add.addItem(withTitle: "Фото с устройства…")
+        add.addItem(withTitle: "Добавить"); add.addItem(withTitle: "Текст"); add.addItem(withTitle: "Заметка"); add.addItem(withTitle: "Фото с устройства…")
         add.target = self; add.action = #selector(addSelected(_:)); add.setAccessibilityLabel("Добавить")
         func button(_ b: NSButton, _ symbol: String, _ label: String, _ selector: Selector) {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label); b.bezelStyle = .rounded
@@ -100,7 +100,8 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     @objc private func addSelected(_ sender: NSPopUpButton) {
         finishFields()
         if sender.indexOfSelectedItem == 1 { canvasController.createCenteredText() }
-        if sender.indexOfSelectedItem == 2 { pick(.add(canvasController.images.insertionPoint)) }
+        if sender.indexOfSelectedItem == 2 { canvasController.createCenteredNote() }
+        if sender.indexOfSelectedItem == 3 { pick(.add(canvasController.images.insertionPoint)) }
     }
     @objc private func undoClicked() { finishFields(); state.undo() }
     @objc private func redoClicked() { finishFields(); state.redo() }

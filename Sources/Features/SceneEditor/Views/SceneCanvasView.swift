@@ -70,6 +70,7 @@ struct SceneTextInputPresentation {
     let opacity: Double
     let scaleX: CGFloat, scaleY: CGFloat
     let yOffset: CGFloat
+    var xInset: CGFloat = 0
     let attributes: [NSAttributedString.Key: Any]
     let color: NSColor
 }
@@ -241,7 +242,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         let logicalSize = CGSize(width: presentation.frame.width / presentation.scaleX, height: presentation.frame.height / presentation.scaleY)
         container.bounds = CGRect(origin: .zero, size: logicalSize)
         input.frame = CGRect(origin: .zero, size: logicalSize)
-        input.textContainerInset = CGSize(width: 0, height: presentation.yOffset)
+        input.textContainerInset = CGSize(width: presentation.xInset, height: presentation.yOffset)
         container.frameCenterRotation = presentation.rotation
         // AppKit adjusts the frame origin when bounds scale or rotation changes.
         // Anchor the transformed local center to the renderer’s scene center.

@@ -264,6 +264,61 @@ import AppKit
         check(state.scene.elements[0] == e && !state.canUndo, "Finishing after native width undo creates no extra scene history")
         withExtendedLifetime(controller) {}
     }
+    static func nativeNote(_ store: SceneStore) {
+        var e = SceneElementModel(kind: .note, frame: CGRect(x: 100, y: 100, width: 220, height: 140), rotation: 30, text: "Note")
+        e.note = SceneNoteModel(background: SceneColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1), padding: 16)
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [e])); state.select([e.id])
+        let controller = SceneCanvasController(state: state, store: store), canvas = controller.view
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 444, height: 294), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas; canvas.editSelection()
+        func descendants(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(descendants) }
+        guard let input = descendants(canvas).compactMap({ $0 as? NSTextView }).first else { fatalError("Missing note input") }
+        check(input.textContainerInset.width == 16 && input.textContainerInset.height == 16, "Native note inset follows presentation")
+        let local = CGPoint(x: 16, y: 16)
+        let offset = SceneTransformController.rotate(CGPoint(x: local.x-e.frame.width/2, y: local.y-e.frame.height/2), e.rotation * .pi/180)
+        let expected = canvas.viewport.viewPoint(CGPoint(x: e.frame.midX+offset.x, y: e.frame.midY+offset.y))
+        let actual = canvas.convert(local, from: input)
+        check(hypot(actual.x-expected.x, actual.y-expected.y) < 0.01, "Native padded origin matches rotated viewport")
+        input.layoutManager!.ensureLayout(for: input.textContainer!)
+        let glyphs = input.layoutManager!.glyphRange(for: input.textContainer!)
+        let glyph = input.layoutManager!.boundingRect(forGlyphRange: glyphs, in: input.textContainer!)
+        let glyphOrigin = canvas.convert(CGPoint(x: glyph.minX + 16, y: glyph.minY + 16), from: input)
+        let glyphOffset = SceneTransformController.rotate(CGPoint(x: glyph.minX + 16-e.frame.width/2, y: glyph.minY + 16-e.frame.height/2), e.rotation * .pi/180)
+        let expectedGlyph = canvas.viewport.viewPoint(CGPoint(x: e.frame.midX + glyphOffset.x, y: e.frame.midY + glyphOffset.y))
+        check(hypot(glyphOrigin.x-expectedGlyph.x, glyphOrigin.y-expectedGlyph.y) < 0.01, "Glyph origin includes padding, rotation and viewport scale")
+        let presentation = ScenePresentationController(store: store).content(for: state.scene)
+        guard case let .note(_, frame, background) = presentation.elements[0].drawing else { fatalError("Missing prepared note") }
+        check(frame.origin == local && background == SceneTextLayout.color(e.resolvedNote.background), "Prepared note retains background and padded text")
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 800, pixelsHigh: 500, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        SceneRenderer().draw(presentation, in: SceneViewport(size: size, in: CGRect(origin: .zero, size: size)), excluding: e.id)
+        NSGraphicsContext.restoreGraphicsState()
+        check([Int(e.frame.midY), 499-Int(e.frame.midY)].contains { (bitmap.colorAt(x: Int(e.frame.midX), y: $0)?.alphaComponent ?? 0) > 0.9 }, "Editing retains note background")
+        let corner = SceneTransformController.targets([e], scale: 1).first { !$0.rotation && $0.handle.x == 1 && $0.handle.y == 1 }!
+        let snapshot = state.value
+        for stretch in [false, true] {
+            let changed = SceneTransformController.applying(snapshot, target: corner, from: corner.point, to: CGPoint(x: corner.point.x+30, y: corner.point.y+30), stretch: stretch, crop: false).scene.elements[0]
+            check(changed.style.fontSize == e.style.fontSize && changed.resolvedNote.padding == 16 && changed.cornerRadius == e.cornerRadius && changed.textScaleX == nil && changed.textScaleY == nil, "Note resize preserves typography, padding and radius")
+        }
+        input.insertText(" typed", replacementRange: input.selectedRange())
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01)); input.breakUndoCoalescing()
+        check(state.scene.elements[0].frame == e.frame, "Typing keeps note frame")
+        let typed = state.value
+        let p = canvas.convert(CGPoint(x: input.bounds.maxX-1, y: input.bounds.midY), from: input)
+        let delta = SceneTransformController.rotate(CGPoint(x: 30*canvas.viewport.scale, y: 0), e.rotation * .pi/180)
+        func event(_ type: NSEvent.EventType, _ d: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: canvas.convert(CGPoint(x: p.x+d.x, y: p.y+d.y), to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        input.mouseDown(with: event(.leftMouseDown, .zero)); input.mouseDragged(with: event(.leftMouseDragged, delta)); input.mouseUp(with: event(.leftMouseUp, delta))
+        let resized = state.value, note = resized.scene.elements[0]
+        check(abs(note.frame.width-e.frame.width-30) < 0.01 && note.frame.height == e.frame.height && note.style.fontSize == e.style.fontSize && note.resolvedNote.padding == 16 && note.textScaleX == nil && note.textScaleY == nil, "Width gesture preserves height, font, padding and scale")
+        _ = input.perform(NSSelectorFromString("undo:"), with: nil); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+        check(state.value == typed, "Native undo restores note width")
+        _ = input.perform(NSSelectorFromString("redo:"), with: nil); RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+        check(state.value == resized, "Native redo restores note width")
+        canvas.finishText(); state.undo(); check(state.value == typed, "Scene undo restores note width once")
+        withExtendedLifetime(controller) {}
+    }
     static func cancelCanvasDrag(_ store: SceneStore, duplicate: Bool) {
         _ = NSApplication.shared
         let first = item(50), second = item(300)
@@ -704,6 +759,7 @@ import AppKit
         savedTextWrapping(store)
         nativeTransformGestures(store)
         nativeWidthUndoOrdering(store)
+        nativeNote(store)
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
         shiftGestures(store)

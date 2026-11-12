@@ -30,7 +30,8 @@ final class SceneInspectorController {
 
     func makePresentation() -> SceneInspectorPresentation {
         let layers = Array(state.scene.elements.reversed())
-        let selected = state.selected, texts = selected.filter { $0.kind == .text }
+        let selected = state.selected, texts = selected.filter { $0.kind.hasTypography }
+        let notes = selected.filter { $0.kind == .note }
         var menus: [String: SceneInspectorMenuPresentation] = [
             "family": .init(items: families.map { $0 == "System" ? "Системный" : $0 }, selectedIndex: nil),
             "weight": .init(items: ["Сверхтонкое", "Тонкое", "Лёгкое", "Обычное", "Среднее", "Полужирное", "Жирное", "Тяжёлое", "Чёрное"], selectedIndex: nil),
@@ -62,6 +63,13 @@ final class SceneInspectorController {
         field("h", uniform(selected.map { $0.frame.height }).map(number))
         field("opacity", uniform(selected.map { $0.opacity * 100 }).map(number))
 
+        if !notes.isEmpty {
+            field("background", uniform(notes.map { $0.resolvedNote.background }).map {
+                [$0.red, $0.green, $0.blue, $0.alpha].map { String(format: "%02X", Int(($0 * 255).rounded())) }.joined()
+            })
+            field("padding", uniform(notes.map { $0.resolvedNote.padding }).map { number($0) })
+            field("radius", uniform(notes.map { $0.cornerRadius }).map { number($0) })
+        }
         var missingFontMessage: String?
         if !texts.isEmpty {
             field("size", uniform(texts.map { $0.style.fontSize }).map { number(CGFloat($0)) })
@@ -82,7 +90,7 @@ final class SceneInspectorController {
         return SceneInspectorPresentation(layers: layers.map(\.name), selectedRows: selectedRows,
             selectionTitle: selected.count == 1 ? "Свойства слоя" : "Выделено: \(selected.count)",
             emptyMessage: nil, showsTextControls: !texts.isEmpty,
-            fields: fields, menus: menus, missingFontMessage: missingFontMessage)
+            fields: fields, menus: menus, missingFontMessage: missingFontMessage, showsNoteControls: !notes.isEmpty, overflowMessage: notes.contains(where: SceneTextLayout.overflows) ? "Текст не помещается в заметке." : nil)
     }
 
     func select(ids: Set<UUID>) {
@@ -103,7 +111,7 @@ final class SceneInspectorController {
         default: return
         }
         state.editSelected { element in
-            guard element.kind == .text else { return }
+            guard element.kind.hasTypography else { return }
             switch key {
             case "family": element.style.family = families[index]
             case "weight": element.style.weight = index
@@ -125,10 +133,11 @@ final class SceneInspectorController {
         let valid: Bool
         switch key {
         case "name": valid = true
-        case "color": valid = color != nil
+        case "color", "background": valid = color != nil
         case "w", "h", "size": valid = number.map { $0.isFinite && $0 > 0 } == true
         case "opacity": valid = number.map { (0...100).contains($0) } == true
         case "line": valid = auto || number.map { $0.isFinite && $0 >= 0 } == true
+        case "padding", "radius": valid = number.map { $0.isFinite && $0 >= 0 } == true
         case "x", "y", "spacing": valid = number?.isFinite == true
         default: return
         }
@@ -154,8 +163,15 @@ final class SceneInspectorController {
                     if element.kind == .text { element.autoTextWidth = false }
                 } else { element.frame.size.height = number! }
             case "opacity": element.opacity = number! / 100
+            case "background", "padding", "radius":
+                guard element.kind == .note else { return }
+                var note = element.resolvedNote
+                if key == "background" { note.background = color! }
+                if key == "padding" { note.padding = number! }
+                if key == "radius" { element.cornerRadius = number! }
+                element.note = note
             default:
-                guard element.kind == .text else { return }
+                guard element.kind.hasTypography else { return }
                 switch key {
                 case "color": element.style.color = color!
                 case "size": element.style.fontSize = number!

@@ -58,7 +58,7 @@ final class SceneCanvasController {
             if !self.widthHistoryHandled, let id = self.editingID,
                self.state.reconcileTextHistory(from: before, undo: undo, matches: { expected, actual in
                    guard let index = actual.scene.elements.firstIndex(where: { $0.id == id }),
-                         actual.scene.elements[index].kind == .text else { return false }
+                         actual.scene.elements[index].kind.hasEditableText else { return false }
                    var fitted = actual.scene.elements[index]
                    SceneTextLayout.fit(&fitted, minimumHeight: self.minimumHeight)
                    guard fitted.frame.height == actual.scene.elements[index].frame.height else { return false }
@@ -126,7 +126,7 @@ final class SceneCanvasController {
         let hit = textTool ? nil : state.hit(point)
         if event.clickCount == 2, let e = hit {
             state.select([e.id])
-            if e.kind == .text { beginEditing(e, initial: state.value, isNew: false, click: event.locationInWindow) }
+            if e.kind.hasEditableText { beginEditing(e, initial: state.value, isNew: false, click: event.locationInWindow) }
             else { onPickReplacement?(e.id) }
             return
         }
@@ -209,6 +209,7 @@ final class SceneCanvasController {
         SceneTextInputPresentation(frame: element.frame, rotation: element.rotation, opacity: element.opacity,
                                    scaleX: element.textScaleX ?? 1, scaleY: element.textScaleY ?? 1,
                                    yOffset: SceneTextLayout.yOffset(element),
+                                   xInset: SceneTextLayout.contentRect(element).minX,
                                    attributes: SceneTextLayout.attributes(element.style),
                                    color: SceneTextLayout.color(element.style.color))
     }
@@ -297,9 +298,20 @@ final class SceneCanvasController {
         finishText()
         beginNewText(at: images.insertionPoint, width: nil)
     }
+    func createCenteredNote() {
+        finishText()
+        let initial = state.value
+        let size = CGSize(width: min(320, state.scene.canvasSize.width), height: min(200, state.scene.canvasSize.height))
+        let point = images.insertionPoint
+        let frame = CGRect(x: max(0, min(point.x - size.width/2, state.scene.canvasSize.width-size.width)),
+                           y: max(0, min(point.y - size.height/2, state.scene.canvasSize.height-size.height)), width: size.width, height: size.height)
+        let e = SceneElementModel(kind: .note, frame: frame, text: "")
+        var next = initial; next.scene.elements.append(e); next.selection = [e.id]
+        state.preview(next); beginEditing(e, initial: initial, isNew: true)
+    }
     private func editSelection() {
         guard state.selected.count == 1, let element = state.selected.first else { return }
-        if element.kind == .text { beginEditing(element, initial: state.value, isNew: false) }
+        if element.kind.hasEditableText { beginEditing(element, initial: state.value, isNew: false) }
         else { onPickReplacement?(element.id) }
     }
     private func keyDown(_ event: NSEvent) -> Bool {

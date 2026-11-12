@@ -18,12 +18,16 @@ final class ScenePresentationController {
             let box = CGRect(origin: .zero, size: element.frame.size)
             let drawing: SceneRenderDrawing
             switch element.kind {
-            case .text:
+            case .text, .note:
                 let y = SceneTextLayout.yOffset(element)
-                drawing = .text(NSAttributedString(string: element.text,
-                    attributes: SceneTextLayout.attributes(element.style)),
-                    frame: CGRect(x: 0, y: y, width: box.width / (element.textScaleX ?? 1), height: max(1, box.height / (element.textScaleY ?? 1)-y)),
-                    scaleX: element.textScaleX ?? 1, scaleY: element.textScaleY ?? 1)
+                let rect = SceneTextLayout.contentRect(element)
+                let text = NSAttributedString(string: element.text,
+                    attributes: SceneTextLayout.attributes(element.style))
+                if element.kind == .note {
+                    drawing = .note(text, frame: CGRect(x: rect.minX, y: y, width: rect.width, height: max(0, rect.maxY-y)), background: SceneTextLayout.color(element.resolvedNote.background))
+                } else {
+                    drawing = .text(text, frame: CGRect(x: 0, y: y, width: box.width / (element.textScaleX ?? 1), height: max(1, box.height / (element.textScaleY ?? 1)-y)), scaleX: element.textScaleX ?? 1, scaleY: element.textScaleY ?? 1)
+                }
             case .image:
                 if let id = element.assetID, let image = image(id) {
                     drawing = .image(image, frame: element.imageRect ?? box)

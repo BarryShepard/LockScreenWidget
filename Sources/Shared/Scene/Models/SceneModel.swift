@@ -1,6 +1,11 @@
 import Foundation
 
-enum SceneElementKind: String, Codable { case text, image }
+enum SceneElementKind: String, Codable {
+    case text, image, note
+    var hasEditableText: Bool { self == .text || self == .note }
+    var hasTypography: Bool { hasEditableText }
+    var isImage: Bool { self == .image }
+}
 
 enum SceneError: LocalizedError {
     case invalid(String)
@@ -35,6 +40,11 @@ struct SceneTextStyleModel: Codable, Equatable {
     var color = SceneColor()
 }
 
+struct SceneNoteModel: Codable, Equatable {
+    var background = SceneColor(red: 1, green: 0.96, blue: 0.82, alpha: 1)
+    var padding: Double = 16
+}
+
 struct SceneElementModel: Codable, Equatable, Identifiable {
     var id: UUID
     var kind: SceneElementKind
@@ -50,23 +60,29 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
     var textScaleX: Double? = nil
     var textScaleY: Double? = nil
     var style: SceneTextStyleModel
+    var note: SceneNoteModel? = nil
+    var resolvedNote: SceneNoteModel { note ?? SceneNoteModel() }
     var assetID: String?
     /// Image placement in element-local, top-left-origin logical points.
     var imageRect: CGRect?
 
     init(kind: SceneElementKind, frame: CGRect, id: UUID = UUID(), name: String? = nil,
-         rotation: Double = 0, cornerRadius: Double = 0, opacity: Double = 1,
-         text: String? = nil, style: SceneTextStyleModel = SceneTextStyleModel(),
+         rotation: Double = 0, cornerRadius: Double? = nil, opacity: Double = 1,
+         text: String? = nil, style: SceneTextStyleModel? = nil,
          assetID: String? = nil, imageRect: CGRect? = nil) {
         self.id = id
         self.kind = kind
-        self.name = name ?? (kind == .text ? "Текст" : "Изображение")
+        self.name = name ?? (kind == .text ? "Текст" : kind == .note ? "Заметка" : "Изображение")
         self.frame = frame
         self.rotation = rotation
-        self.cornerRadius = cornerRadius
+        self.cornerRadius = cornerRadius ?? (kind == .note ? 12 : 0)
         self.opacity = opacity
         self.text = text ?? (kind == .text ? "Текст" : "")
-        self.style = style
+        self.style = style ?? SceneTextStyleModel()
+        if kind == .note && style == nil {
+            self.style.fontSize = 24
+            self.style.color = SceneColor(red: 0.16, green: 0.14, blue: 0.12, alpha: 1)
+        }
         self.assetID = assetID
         self.imageRect = imageRect
     }
@@ -102,6 +118,13 @@ struct EditorSceneModel: Codable, Equatable {
                   element.imageRect.map(Self.validRect) ?? true,
                   [element.textScaleX, element.textScaleY].allSatisfy({ $0.map { $0.isFinite && $0 > 0 } ?? true }) else {
                 throw SceneError.invalid("У элемента «\(element.name)» некорректные размеры или параметры отображения.")
+            }
+            if let note = element.note {
+                guard note.padding.isFinite, note.padding >= 0,
+                      [note.background.red, note.background.green, note.background.blue, note.background.alpha]
+                        .allSatisfy({ $0.isFinite && (0...1).contains($0) }) else {
+                    throw SceneError.invalid("У заметки некорректный фон или отступ.")
+                }
             }
             let style = element.style
             guard !style.family.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

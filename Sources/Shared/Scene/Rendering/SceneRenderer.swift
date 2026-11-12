@@ -31,6 +31,7 @@ struct SceneRenderElement: Equatable {
 
 enum SceneRenderDrawing: Equatable {
     case text(NSAttributedString, frame: CGRect, scaleX: CGFloat, scaleY: CGFloat)
+    case note(NSAttributedString, frame: CGRect, background: NSColor)
     case image(NSImage, frame: CGRect)
     case missingImage(label: NSAttributedString, frame: CGRect, background: NSColor)
 
@@ -38,6 +39,8 @@ enum SceneRenderDrawing: Equatable {
         switch (lhs, rhs) {
         case let (.text(left, leftFrame, lx, ly), .text(right, rightFrame, rx, ry)):
             return leftFrame == rightFrame && lx == rx && ly == ry && left.isEqual(to: right)
+        case let (.note(left, lf, lb), .note(right, rf, rb)):
+            return lf == rf && lb.isEqual(rb) && left.isEqual(to: right)
         case let (.image(left, leftFrame), .image(right, rightFrame)):
             // The presenter reuses the decoded image while it is cached.
             return leftFrame == rightFrame && left === right
@@ -56,7 +59,7 @@ final class SceneRenderer {
         ctx.clip(to: viewport.rect)
         ctx.translateBy(x: viewport.rect.minX, y: viewport.rect.minY)
         ctx.scaleBy(x: viewport.scale, y: viewport.scale)
-        for e in content.elements where e.id != excluding {
+        for e in content.elements {
             ctx.saveGState()
             ctx.translateBy(x: e.frame.midX, y: e.frame.midY)
             ctx.rotate(by: e.rotation * .pi / 180)
@@ -64,10 +67,19 @@ final class SceneRenderer {
             let box = CGRect(origin: .zero, size: e.frame.size), radius = min(e.cornerRadius, box.width/2, box.height/2)
             NSBezierPath(roundedRect: box, xRadius: radius, yRadius: radius).addClip()
             ctx.setAlpha(e.opacity); ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+            if e.id == excluding {
+                if case let .note(_, _, background) = e.drawing { background.setFill(); box.fill() }
+                ctx.endTransparencyLayer(); ctx.restoreGState(); continue
+            }
             switch e.drawing {
             case let .text(text, frame, sx, sy):
                 ctx.scaleBy(x: sx, y: sy)
                 text.draw(with: frame, options: [.usesLineFragmentOrigin, .usesFontLeading])
+            case let .note(text, frame, background):
+                background.setFill(); box.fill()
+                ctx.saveGState(); ctx.clip(to: frame)
+                text.draw(with: frame, options: [.usesLineFragmentOrigin, .usesFontLeading])
+                ctx.restoreGState()
             case let .image(image, frame):
                 image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1,
                            respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high.rawValue])

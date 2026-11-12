@@ -40,13 +40,29 @@ enum SceneTextLayout {
     }
 
     static func fit(_ e: inout SceneElementModel, minimumHeight: CGFloat = 1) {
+        guard e.kind != .note else { return }
         let auto = e.autoTextWidth == true
         let sx = e.textScaleX ?? 1, sy = e.textScaleY ?? 1
         if auto { e.frame.size.width = max(28 * sx, (measure(e, width: .greatestFiniteMagnitude).width + 2) * sx) }
         e.frame.size.height = max(minimumHeight, measure(e, width: e.frame.width / sx).height * sy)
     }
 
+    static func contentRect(_ e: SceneElementModel) -> CGRect {
+        let p = e.kind == .note ? min(e.resolvedNote.padding, e.frame.width / 2, e.frame.height / 2) : 0
+        return CGRect(x: p, y: p, width: max(0, e.frame.width - 2*p), height: max(0, e.frame.height - 2*p))
+    }
+
+    static func overflows(_ e: SceneElementModel) -> Bool {
+        let rect = contentRect(e)
+        return rect.width <= 0 || measure(e, width: rect.width).height > rect.height
+    }
+
     static func yOffset(_ e: SceneElementModel) -> CGFloat {
+        if e.kind == .note {
+            let rect = contentRect(e)
+            let free = max(0, rect.height - measure(e, width: rect.width).height)
+            return rect.minY + [0, free/2, free][e.style.verticalAlignment]
+        }
         let sy = e.textScaleY ?? 1
         let free = max(0, e.frame.height / sy - measure(e, width: e.frame.width / (e.textScaleX ?? 1)).height)
         return [0, free/2, free][e.style.verticalAlignment]

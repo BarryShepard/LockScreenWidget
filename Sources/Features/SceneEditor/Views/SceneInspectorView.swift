@@ -19,6 +19,8 @@ struct SceneInspectorPresentation {
     var fields: [String: SceneInspectorFieldPresentation]
     var menus: [String: SceneInspectorMenuPresentation]
     var missingFontMessage: String?
+    var showsNoteControls: Bool = false
+    var overflowMessage: String? = nil
 }
 
 private final class SceneStackView: NSView { override var isFlipped: Bool { true } }
@@ -43,7 +45,8 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
     private var fields = [String: NSTextField](), menus = [String: NSPopUpButton]()
     private var changedField: NSTextField?
     private var rows: [String] = [], syncing = false
-    private var textRows = [NSView]()
+    private var textRows = [NSView](), noteRows = [NSView]()
+    private let overflow = NSTextField(wrappingLabelWithString: "")
     private let missingFont = NSTextField(wrappingLabelWithString: "")
 
     override init(frame frameRect: NSRect) {
@@ -79,6 +82,10 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         addField("spacing", "Трекинг, %", text: true); addField("color", "Цвет, HEX", text: true)
         addMenu("align", "По ширине")
         addMenu("valign", "По высоте")
+        addField("background", "Фон, HEX", note: true)
+        addField("padding", "Отступ, pt", note: true)
+        addField("radius", "Радиус, pt", note: true)
+        overflow.textColor = .systemOrange; properties.addArrangedSubview(overflow)
         missingFont.textColor = .secondaryLabelColor; properties.addArrangedSubview(missingFont)
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: topAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -89,7 +96,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
             stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 12), stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -12),
             layerScroll.widthAnchor.constraint(equalTo: stack.widthAnchor), layerScroll.heightAnchor.constraint(equalToConstant: 130),
             properties.widthAnchor.constraint(equalTo: stack.widthAnchor), empty.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            missingFont.widthAnchor.constraint(equalTo: properties.widthAnchor)
+            missingFont.widthAnchor.constraint(equalTo: properties.widthAnchor), overflow.widthAnchor.constraint(equalTo: properties.widthAnchor)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -104,7 +111,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         guard !syncing else { return }
         onSelectionChange?(table.selectedRowIndexes)
     }
-    private func row(_ title: String, _ control: NSControl, text: Bool) {
+    private func row(_ title: String, _ control: NSControl, text: Bool, note: Bool = false) {
         let label = NSTextField(labelWithString: title); label.font = .systemFont(ofSize: 12)
         let stack = NSStackView(views: [label,control]); stack.spacing = 5
         properties.addArrangedSubview(stack)
@@ -114,11 +121,12 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         control.setAccessibilityLabel(title)
         if text { textRows.append(stack) }
+        if note { noteRows.append(stack) }
     }
-    private func addField(_ key: String, _ title: String, text: Bool = false) {
+    private func addField(_ key: String, _ title: String, text: Bool = false, note: Bool = false) {
         let f = NSTextField(); f.identifier = NSUserInterfaceItemIdentifier(key); f.delegate = self
         f.usesSingleLineMode = true; f.lineBreakMode = .byTruncatingTail
-        fields[key] = f; row(title, f, text: text)
+        fields[key] = f; row(title, f, text: text, note: note)
     }
     private func addMenu(_ key: String, _ title: String) {
         let p = NSPopUpButton(); p.addItem(withTitle: "Разные"); p.lastItem?.isEnabled = false
@@ -136,6 +144,9 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         empty.isHidden = presentation.emptyMessage == nil
         empty.stringValue = presentation.emptyMessage ?? ""
         textRows.forEach { $0.isHidden = !presentation.showsTextControls }
+        noteRows.forEach { $0.isHidden = !presentation.showsNoteControls }
+        overflow.isHidden = presentation.overflowMessage == nil
+        overflow.stringValue = presentation.overflowMessage ?? ""
         for (key, value) in presentation.fields {
             // A model refresh must not replace text in the active native editor.
             guard let field = fields[key], field.currentEditor() == nil else { continue }
