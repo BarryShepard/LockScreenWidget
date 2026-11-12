@@ -207,6 +207,52 @@ import AppKit
         check(replaced, "Double-click image edge requests replacement")
         withExtendedLifetime((controller, imageController)) {}
     }
+    static func nativeWidthUndoOrdering(_ store: SceneStore) {
+        var e = item(100); e.text = "base"; e.frame.size.height = 38
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [e])); state.select([e.id])
+        let controller = SceneCanvasController(state: state, store: store), canvas = controller.view
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas; canvas.editSelection()
+        func descendants(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(descendants) }
+        guard let input = descendants(canvas).compactMap({ $0 as? NSTextView }).first else { fatalError("Missing input") }
+        func flush() { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01)) }
+        func type(_ s: String) { input.insertText(s, replacementRange: input.selectedRange()); flush(); input.breakUndoCoalescing() }
+        func drag(_ amount: CGFloat) {
+            let point = canvas.convert(CGPoint(x: input.bounds.maxX-1, y: input.bounds.midY), from: input)
+            func event(_ t: NSEvent.EventType, _ x: CGFloat) -> NSEvent {
+                NSEvent.mouseEvent(with: t, location: canvas.convert(CGPoint(x: point.x+x, y: point.y), to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+            }
+            input.mouseDown(with: event(.leftMouseDown, 0)); input.mouseDragged(with: event(.leftMouseDragged, amount)); input.mouseUp(with: event(.leftMouseUp, amount)); flush()
+        }
+        func command(_ name: String) { _ = input.perform(NSSelectorFromString(name), with: nil); flush() }
+        type("A"); check(state.scene.elements[0].text == "baseA", "Typed before resize")
+        drag(30); let width1 = state.scene.elements[0].frame.width
+        drag(20); let width2 = state.scene.elements[0].frame.width
+        type("B"); check(state.scene.elements[0].text == "baseAB", "Typed after resize")
+        command("undo:"); check(state.scene.elements[0].text == "baseA" && state.scene.elements[0].frame.width == width2, "Native undo removes later typing first")
+        command("undo:"); check(state.scene.elements[0].frame.width == width1 && state.scene.elements[0].text == "baseA", "Native undo reverts second width")
+        command("undo:"); check(state.scene.elements[0].frame.width == e.frame.width && state.scene.elements[0].text == "baseA", "Native undo reverts first width")
+        command("undo:"); check(state.scene.elements[0].text == "base", "Native undo reverts earlier typing")
+        command("redo:"); command("redo:"); command("redo:"); command("redo:")
+        check(state.scene.elements[0].frame.width == width2 && state.scene.elements[0].text == "baseAB", "Native redo restores chronological sequence")
+        canvas.finishText(); state.undo()
+        check(state.scene.elements[0].frame.width == width2 && state.scene.elements[0].text == "baseA", "Scene undo after finish reverts last typing once")
+        state.undo(); check(state.scene.elements[0].frame.width == width1, "Scene undo after finish reverts second width once")
+        state.undo(); check(state.scene.elements[0].frame.width == e.frame.width, "Scene undo after finish reverts first width once")
+        state.undo(); check(state.scene.elements[0].text == "base" && !state.canUndo, "Scene undo after finish reverts earlier typing once")
+        canvas.editSelection()
+        guard let secondInput = descendants(canvas).compactMap({ $0 as? NSTextView }).first else { fatalError("Missing reentered input") }
+        let point = canvas.convert(CGPoint(x: secondInput.bounds.maxX-1, y: secondInput.bounds.midY), from: secondInput)
+        func secondEvent(_ t: NSEvent.EventType, _ dx: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: t, location: canvas.convert(CGPoint(x: point.x+dx, y: point.y), to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        secondInput.mouseDown(with: secondEvent(.leftMouseDown, 0)); secondInput.mouseDragged(with: secondEvent(.leftMouseDragged, 30)); secondInput.mouseUp(with: secondEvent(.leftMouseUp, 30)); flush()
+        _ = secondInput.perform(NSSelectorFromString("undo:"), with: nil); flush()
+        check(state.scene.elements[0].frame.width == e.frame.width && !state.canUndo, "Native width undo restores scene checkpoint")
+        canvas.finishText()
+        check(state.scene.elements[0] == e && !state.canUndo, "Finishing after native width undo creates no extra scene history")
+        withExtendedLifetime(controller) {}
+    }
     static func cancelCanvasDrag(_ store: SceneStore, duplicate: Bool) {
         _ = NSApplication.shared
         let first = item(50), second = item(300)
@@ -646,6 +692,7 @@ import AppKit
         transformedTextInput(store)
         savedTextWrapping(store)
         nativeTransformGestures(store)
+        nativeWidthUndoOrdering(store)
         cancelCanvasDrag(store, duplicate: false)
         cancelCanvasDrag(store, duplicate: true)
         shiftGestures(store)

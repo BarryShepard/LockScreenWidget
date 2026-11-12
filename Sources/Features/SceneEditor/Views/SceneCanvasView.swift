@@ -2,6 +2,8 @@ import AppKit
 
 private final class SceneInputView: NSTextView {
     var onWidthGesture: ((NSEvent, Int, Int) -> Void)?
+    var onHistoryStart: (() -> Void)?
+    var onHistoryEnd: ((Bool, Bool) -> Void)?
     private var widthSide = 0
     func cancelWidthGesture() { widthSide = 0 }
     override func mouseDown(with event: NSEvent) {
@@ -20,8 +22,20 @@ private final class SceneInputView: NSTextView {
     }
     private let localHistory = UndoManager()
     override var undoManager: UndoManager? { localHistory }
-    @objc func undo(_ sender: Any?) { localHistory.undo() }
-    @objc func redo(_ sender: Any?) { localHistory.redo() }
+    @objc func undo(_ sender: Any?) { let before = string; onHistoryStart?(); localHistory.undo(); onHistoryEnd?(true, string != before) }
+    @objc func redo(_ sender: Any?) { let before = string; onHistoryStart?(); localHistory.redo(); onHistoryEnd?(false, string != before) }
+    func registerWidthHistory(_ action: @escaping (Bool) -> Void) {
+        localHistory.registerUndo(withTarget: self) { target in
+            target.registerWidthHistory(action)
+            action(target.localHistory.isUndoing)
+        }
+    }
+    func addWidthHistory(_ action: @escaping (Bool) -> Void) {
+        breakUndoCoalescing()
+        localHistory.beginUndoGrouping()
+        registerWidthHistory(action)
+        localHistory.endUndoGrouping()
+    }
 }
 
 private final class SceneTextContainerView: NSView {
@@ -70,6 +84,8 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     var onKeyDown: ((NSEvent) -> Bool)?
     var onTextChange: ((String) -> Void)?
     var onTextWidthGesture: ((NSEvent, Int, Int) -> Void)?
+    var onTextHistoryStart: (() -> Void)?
+    var onTextHistoryEnd: ((Bool) -> Void)?
     var onLayout: (() -> Void)?
     var onDragUpdate: ((CGPoint?) -> Bool)?
     var onDrop: ((NSPasteboard, CGPoint) -> Bool)?
@@ -113,6 +129,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     }
     override func mouseExited(with event: NSEvent) { NSCursor.arrow.set() }
     func cancelTextWidthGesture() { input?.cancelWidthGesture() }
+    func registerTextWidthHistory(_ action: @escaping (Bool) -> Void) { input?.addWidthHistory(action) }
     func focus() { window?.makeFirstResponder(self) }
     func createCenteredText() { onAction?(.createText) }
     func editSelection() { onAction?(.editSelection) }
@@ -193,6 +210,11 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         field.textContainer?.containerSize.height = CGFloat.greatestFiniteMagnitude
 
         field.string = text
+        field.onHistoryStart = { [weak self] in self?.onTextHistoryStart?() }
+        field.onHistoryEnd = { [weak self, weak field] undo, changed in
+            if changed, let field, !field.hasMarkedText() { self?.onTextChange?(field.string) }
+            self?.onTextHistoryEnd?(undo)
+        }
         field.onWidthGesture = { [weak self] event, side, phase in self?.onTextWidthGesture?(event, side, phase) }
         field.delegate = self
         field.textStorage?.setAttributes(presentation.attributes, range: NSRange(location: 0, length: (text as NSString).length))

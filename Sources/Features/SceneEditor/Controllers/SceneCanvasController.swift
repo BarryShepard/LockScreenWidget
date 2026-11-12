@@ -21,6 +21,8 @@ final class SceneCanvasController {
     private var axisX: Bool?
     private var transform: SceneTransformController.Target?
     private var cropGesture = false
+    private var historyBefore: SceneSnapshot?
+    private var widthHistoryHandled = false
     private var widthStart: SceneSnapshot?
     private var widthPoint = CGPoint.zero
     private var groupRestriction = false
@@ -46,6 +48,16 @@ final class SceneCanvasController {
             let handled = self.keyDown(event)
             self.refresh()
             return handled
+        }
+        view.onTextHistoryStart = { [weak self] in
+            self?.historyBefore = self?.state.value; self?.widthHistoryHandled = false
+        }
+        view.onTextHistoryEnd = { [weak self] undo in
+            guard let self, let before = self.historyBefore else { return }
+            self.historyBefore = nil
+            if !self.widthHistoryHandled && self.state.reconcileTextHistory(from: before, undo: undo) {
+                self.initialText = self.state.value
+            }
         }
         view.onTextWidthGesture = { [weak self] event, side, phase in self?.textWidthGesture(event, side: side, phase: phase) }
         view.onTextChange = { [weak self] text in self?.textChanged(text) }
@@ -228,7 +240,18 @@ final class SceneCanvasController {
         next.scene.elements[index].autoTextWidth = false
         SceneTextLayout.fit(&next.scene.elements[index], minimumHeight: 1)
         state.preview(next)
-        if phase == 2 { state.finish(from: start); initialText = state.value; widthStart = nil }
+        if phase == 2 {
+            state.finish(from: start); initialText = state.value; widthStart = nil
+            if state.scene != start.scene {
+                view.registerTextWidthHistory { [weak self] undo in
+                    guard let self else { return }
+                    self.widthHistoryHandled = true
+                    if undo { self.state.undo() } else { self.state.redo() }
+                    self.initialText = self.state.value
+                    self.refresh()
+                }
+            }
+        }
         refresh()
     }
     private func textChanged(_ text: String) {

@@ -84,6 +84,17 @@ final class SceneEditingStateModel {
         guard let next = future.popLast() else { return }
         past.append(value); value = next; onUpdate?(.committed)
     }
+    /// Native text undo can cross a scene checkpoint already committed during editing.
+    func reconcileTextHistory(from before: SceneSnapshot, undo: Bool) -> Bool {
+        guard before.scene != value.scene else { return false }
+        if undo, let previous = past.last, previous.scene == value.scene {
+            past.removeLast(); future.append(before); return true
+        }
+        if !undo, let next = future.last, next.scene == value.scene {
+            future.removeLast(); past.append(before); return true
+        }
+        return false
+    }
     func editSelected(_ edit: (inout SceneElementModel) -> Void) {
         change { v in
             for i in v.scene.elements.indices where v.selection.contains(v.scene.elements[i].id) { edit(&v.scene.elements[i]) }
