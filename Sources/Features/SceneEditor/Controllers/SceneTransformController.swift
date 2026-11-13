@@ -119,7 +119,7 @@ enum SceneTransformController {
             e.frame = CGRect(x: newCenter.x+offset.x*sx-width/2, y: newCenter.y+offset.y*sy-height/2, width: width, height: height)
             if let image = e.imageRect { e.imageRect = CGRect(x: image.minX*sx, y: image.minY*sy, width: image.width*sx, height: image.height*sy) }
             if e.kind != .note { e.cornerRadius *= min(sx, sy) }
-            if e.kind == .text { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
+            if e.kind == .text || e.kind == .countdown { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
             result.scene.elements[i] = e
         }
         return result

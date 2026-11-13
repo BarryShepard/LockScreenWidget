@@ -7,12 +7,26 @@ final class SceneCountdownInspectorController {
     private var now: Date
     private let zones = Array(Set(TimeZone.knownTimeZoneIdentifiers + [TimeZone.current.identifier, "UTC"])).sorted()
     private var identity: (id: UUID, target: Date, zone: String, source: SceneCountdownSource)?
+    private struct WallEditContext {
+        let token: UUID
+        let id: UUID
+        let timer: SceneCountdownModel
+    }
+    private var activeWallEdit: WallEditContext?
+    private var blockedChoice = false
     private var draft: (date: String, time: String, resolution: SceneWallTimeResolution)?
 
     init(state: SceneEditingStateModel, view: SceneCountdownInspectorView, catalog: EventCatalogModel, now: Date) {
         self.state = state; self.view = view; self.catalog = catalog; self.now = now
-        view.onWallEdit = { [weak self] date, time in self?.editWall(date: date, time: time) }
-        view.onChoice = { [weak self] key, index in self?.choose(key: key, index: index) }
+        view.onBeginWallEdit = { [weak self] in self?.beginWallEdit() }
+        view.onEndWallEdit = { [weak self] token, date, time, changed in
+            self?.endWallEdit(token: token, date: date, time: time, changed: changed)
+        }
+        view.onChoice = { [weak self] id, key, index in
+            guard let self else { return }
+            guard self.selected?.id == id else { self.refresh(); return }
+            self.choose(key: key, index: index)
+        }
         view.onRadius = { [weak self] value in
             guard let self, let radius = Double(value), radius.isFinite, radius >= 0 else { return }
             self.state.editSelected { if $0.kind == .countdown { $0.cornerRadius = radius } }
@@ -23,13 +37,14 @@ final class SceneCountdownInspectorController {
         return element
     }
     private func synchronize() {
-        guard let element = selected, let timer = element.countdown else { identity = nil; draft = nil; return }
+        guard let element = selected, let timer = element.countdown else { identity = nil; draft = nil; blockedChoice = false; return }
         if identity?.id != element.id || identity?.target != timer.targetDate || identity?.zone != timer.timeZoneID || identity?.source != timer.source {
-            draft = nil
+            draft = nil; blockedChoice = false
         }
         identity = (element.id, timer.targetDate, timer.timeZoneID, timer.source)
     }
     func refresh() {
+        view.prepare(for: selected?.id)
         synchronize()
         view.isHidden = selected == nil
         guard let element = selected, let timer = element.countdown else { return }
@@ -57,13 +72,13 @@ final class SceneCountdownInspectorController {
         }
         if let draft {
             switch draft.resolution {
-            case .invalid: return "Проверьте YYYY-MM-DD и HH:mm[:ss]. Несуществующее местное время нельзя сохранить."
-            case .ambiguous: return "Это время встречается дважды. Выберите первое или второе вхождение."
+            case .invalid: return (blockedChoice ? "Сначала исправьте дату и время перед сменой источника или пояса.\n" : "") + "Проверьте YYYY-MM-DD (1583–9999) и HH:mm[:ss]. Несуществующее местное время нельзя сохранить."
+            case .ambiguous: return (blockedChoice ? "Сначала уточните время перед сменой источника или пояса.\n" : "") + "Это время встречается дважды. Выберите первое или второе вхождение."
             case .unique: break
             }
         }
         if SceneCountdownPresentationController.wallFields(timer.targetDate, zone: timer.timeZoneID) == nil {
-            return "Дата вне диапазона редактора (0001–9999). Введите новую дату."
+            return "Дата вне диапазона редактора (1583–9999). Введите новую дату."
         }
         return "Дата и время в выбранном часовом поясе."
     }
@@ -74,17 +89,41 @@ final class SceneCountdownInspectorController {
     }
     func focus() { view.focusDate(custom: selected?.countdown?.source == .custom) }
 
+    private func beginWallEdit() -> UUID? {
+        guard let element = selected, let timer = element.countdown, timer.source == .custom else { return nil }
+        let context = WallEditContext(token: UUID(), id: element.id, timer: timer)
+        activeWallEdit = context
+        return context.token
+    }
+    private func endWallEdit(token: UUID, date: String, time: String, changed: Bool) {
+        guard let context = activeWallEdit, context.token == token else { return }
+        activeWallEdit = nil
+        guard changed else { return }
+        // Selection may already have changed. Never reinterpret text in the new
+        // layer/zone, or overwrite a target changed by Undo or another action.
+        guard let current = state.scene.elements.first(where: { $0.id == context.id })?.countdown,
+              current.source == context.timer.source, current.timeZoneID == context.timer.timeZoneID,
+              current.targetDate == context.timer.targetDate else { return }
+        applyWall(date: date, time: time, to: context.id, zone: context.timer.timeZoneID)
+    }
     func editWall(date: String, time: String) {
         synchronize()
         guard let element = selected, let timer = element.countdown, timer.source == .custom else { return }
-        let result = SceneCountdownPresentationController.resolve(date: date, time: time, zone: timer.timeZoneID)
-        draft = (date,time,result)
-        if case let .unique(target) = result { commit(target, to: element.id) }
+        applyWall(date: date, time: time, to: element.id, zone: timer.timeZoneID)
+    }
+    private func applyWall(date: String, time: String, to id: UUID, zone: String) {
+        let result = SceneCountdownPresentationController.resolve(date: date, time: time, zone: zone)
+        blockedChoice = false
+        if selected?.id == id { draft = (date,time,result) }
+        if case let .unique(target) = result { commit(target, to: id) }
         refresh()
     }
     private func commit(_ target: Date, to id: UUID) {
-        draft = nil
-        state.editSelected { if $0.id == id { $0.countdown?.targetDate = target } }
+        if selected?.id == id { draft = nil; blockedChoice = false }
+        state.change { snapshot in
+            guard let index = snapshot.scene.elements.firstIndex(where: { $0.id == id }) else { return }
+            snapshot.scene.elements[index].countdown?.targetDate = target
+        }
     }
     func choose(key: String, index: Int) {
         // Invalidate stale ambiguous candidates before interpreting a delayed action.
@@ -98,7 +137,13 @@ final class SceneCountdownInspectorController {
         let availableZones = zones.contains(timer.timeZoneID) ? zones : (zones + [timer.timeZoneID]).sorted()
         guard (key == "source" && (0...1).contains(index)) || (key == "zone" && availableZones.indices.contains(index)) ||
                 (key == "format" && (0...2).contains(index)) || (key == "seconds" && (0...1).contains(index)) else { return }
-        if key == "source" || key == "zone" { draft = nil }
+        if key == "source" || key == "zone" {
+            // Changing interpretation of an unresolved wall time is never implicit.
+            if draft != nil {
+                blockedChoice = true; refresh(); return
+            }
+            draft = nil; blockedChoice = false
+        }
         state.editSelected { e in
             guard e.id == element.id, var value = e.countdown else { return }
             switch key {

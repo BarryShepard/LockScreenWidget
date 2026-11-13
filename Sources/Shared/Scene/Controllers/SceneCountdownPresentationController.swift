@@ -6,6 +6,8 @@ enum SceneWallTimeResolution: Equatable {
 
 /// Pure date calculation shared by the editor, inspector and lock presenter.
 enum SceneCountdownPresentationController {
+    // Public Foundation Gregorian calendars use the historical 1582 cutover.
+    // Accept complete Gregorian years only; stored absolute targets remain valid.
     static func nextEvent(in catalog: EventCatalogModel, at now: Date) -> ApocalypseEventModel? {
         let eligible = catalog.events.filter {
             parseEventDay($0.date) != nil && eventHasCountdown($0)
@@ -37,7 +39,7 @@ enum SceneCountdownPresentationController {
               (-70_000_000_000...260_000_000_000).contains(target.timeIntervalSinceReferenceDate) else { return nil }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
         let c = calendar.dateComponents([.era, .year, .month, .day, .hour, .minute, .second], from: target)
-        guard c.era == 1, let year = c.year, (1...9999).contains(year), let month = c.month, let day = c.day,
+        guard c.era == 1, let year = c.year, (1583...9999).contains(year), let month = c.month, let day = c.day,
               let hour = c.hour, let minute = c.minute, let second = c.second else { return nil }
         return (String(format: "%04d-%02d-%02d", year, month, day), String(format: "%02d:%02d:%02d", hour, minute, second))
     }
@@ -50,7 +52,7 @@ enum SceneCountdownPresentationController {
         }
         guard let d = parts(date, separator: "-", lengths: [4,2,2]),
               let t = parts(time, separator: ":", lengths: time.count == 5 ? [2,2] : [2,2,2]),
-              (1...9999).contains(d[0]), (1...12).contains(d[1]), (1...31).contains(d[2]),
+              (1583...9999).contains(d[0]), (1...12).contains(d[1]), (1...31).contains(d[2]),
               (0...23).contains(t[0]), (0...59).contains(t[1]), (t.count == 2 || (0...59).contains(t[2])),
               let timeZone = TimeZone(identifier: zone) else { return .invalid }
         let components = DateComponents(era: 1, year: d[0], month: d[1], day: d[2], hour: t[0], minute: t[1], second: t.count == 3 ? t[2] : 0)
