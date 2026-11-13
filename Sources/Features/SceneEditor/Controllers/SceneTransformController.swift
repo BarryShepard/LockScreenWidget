@@ -62,7 +62,27 @@ enum SceneTransformController {
         return NSCursor.frameResize(position: positions[octant], directions: .all)
     }
     private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x-b.x, a.y-b.y) }
-    static func applying(_ start: SceneSnapshot, target: Target, from: CGPoint, to: CGPoint, stretch: Bool, crop: Bool) -> SceneSnapshot {
+    /// Numeric group dimensions use one uniform transform, preserving rotated children.
+    static func scaling(_ start: SceneSnapshot, factor: CGFloat, anchor: CGPoint) -> SceneSnapshot {
+        var next = start
+        for i in next.scene.elements.indices where start.selection.contains(next.scene.elements[i].id) {
+            var element = next.scene.elements[i]
+            let frame = element.frame
+            element.frame = CGRect(x: anchor.x+(frame.minX-anchor.x)*factor,
+                y: anchor.y+(frame.minY-anchor.y)*factor, width: frame.width*factor, height: frame.height*factor)
+            if let image = element.imageRect {
+                element.imageRect = CGRect(x: image.minX*factor, y: image.minY*factor, width: image.width*factor, height: image.height*factor)
+            }
+            if element.kind != .note { element.cornerRadius *= factor }
+            if element.kind.hasTypography && element.kind != .note {
+                element.textScaleX = (element.textScaleX ?? 1)*factor
+                element.textScaleY = (element.textScaleY ?? 1)*factor
+            }
+            next.scene.elements[i] = element
+        }
+        return next
+    }
+    static func applying(_ start: SceneSnapshot, target: Target, from: CGPoint, to: CGPoint, stretch: Bool, crop: Bool, centered: Bool = false) -> SceneSnapshot {
         var result = start
         let chosen = start.scene.elements.filter { start.selection.contains($0.id) }
         guard !chosen.isEmpty, let group = SceneGeometry.bounds(chosen) else { return start }
@@ -97,9 +117,10 @@ enum SceneTransformController {
             if let i = result.scene.elements.firstIndex(where: { $0.id == e.id }) { result.scene.elements[i] = changed }
             return result
         }
-        var sx = h.x == 0 ? 1 : (f.width + CGFloat(h.x)*delta.x)/f.width
-        var sy = h.y == 0 ? 1 : (f.height + CGFloat(h.y)*delta.y)/f.height
-        if (!stretch || single == nil) && !(single?.kind == .note && h.y == 0) {
+        let multiplier: CGFloat = centered ? 2 : 1
+        var sx = h.x == 0 ? 1 : (f.width + multiplier*CGFloat(h.x)*delta.x)/f.width
+        var sy = h.y == 0 ? 1 : (f.height + multiplier*CGFloat(h.y)*delta.y)/f.height
+        if centered || ((!stretch || single == nil) && !(single?.kind == .note && h.y == 0)) {
             let s: CGFloat
             if h.x == 0 { s = sy } else if h.y == 0 { s = sx }
             else { s = 1 + ((sx-1)*f.width*f.width + (sy-1)*f.height*f.height)/(f.width*f.width+f.height*f.height) }
@@ -111,7 +132,7 @@ enum SceneTransformController {
         let anchorOffset = rotate(anchorLocal, a)
         let anchor = CGPoint(x: center.x+anchorOffset.x, y: center.y+anchorOffset.y)
         let newCenterOffset = rotate(CGPoint(x: -anchorLocal.x*sx, y: -anchorLocal.y*sy), a)
-        let newCenter = CGPoint(x: anchor.x+newCenterOffset.x, y: anchor.y+newCenterOffset.y)
+        let newCenter = centered ? center : CGPoint(x: anchor.x+newCenterOffset.x, y: anchor.y+newCenterOffset.y)
         for i in result.scene.elements.indices where start.selection.contains(result.scene.elements[i].id) {
             var e = result.scene.elements[i]
             let offset = CGPoint(x: e.frame.midX-center.x, y: e.frame.midY-center.y)
@@ -119,7 +140,7 @@ enum SceneTransformController {
             e.frame = CGRect(x: newCenter.x+offset.x*sx-width/2, y: newCenter.y+offset.y*sy-height/2, width: width, height: height)
             if let image = e.imageRect { e.imageRect = CGRect(x: image.minX*sx, y: image.minY*sy, width: image.width*sx, height: image.height*sy) }
             if e.kind != .note { e.cornerRadius *= min(sx, sy) }
-            if e.kind == .text || e.kind == .countdown { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
+            if e.kind.hasTypography && e.kind != .note { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
             result.scene.elements[i] = e
         }
         return result

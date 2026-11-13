@@ -1,6 +1,6 @@
 import AppKit
 
-final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
+final class EditorWindowController: NSWindowController, NSTextFieldDelegate, NSWindowDelegate {
     let model: ApplicationModel
     let preferences: UserDefaults
     let editorView = EditorView()
@@ -8,6 +8,7 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
     var onSettingsChange: (() -> Void)?
     var onToggleEnabled: (() -> Void)?
     var onTestPanel: (() -> Void)?
+    var onVisibilityChange: ((Bool) -> Void)?
     private(set) var selectedIndices: Set<Int> = [0]
     private var selectedEventIndex = 0
     private var now = Date()
@@ -68,10 +69,13 @@ final class EditorWindowController: NSWindowController, NSTextFieldDelegate {
         canvas.onKeyDown = { [weak self] code, shift in self?.handleKey(code, shift: shift) ?? false }
     }
 
-    override func loadWindow() { window = EditorWindow(content: editorView) }
+    override func loadWindow() { window = EditorWindow(content: editorView); window?.delegate = self }
+
+    func windowWillClose(_ notification: Notification) { onVisibilityChange?(false) }
 
     @objc func showPreview() {
         if window == nil { loadWindow() }
+        onVisibilityChange?(true)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         refresh(at: Date())

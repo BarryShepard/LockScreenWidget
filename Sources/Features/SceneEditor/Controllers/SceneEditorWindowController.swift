@@ -22,6 +22,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     var canUndo: Bool { state.canUndo }
     var onSceneChange: ((EditorSceneModel?) -> Void)?
     var onRevealLegacy: (() -> Void)?
+    var onVisibilityChange: ((Bool) -> Void)?
 
     init(scene: EditorSceneModel, hasSavedScene: Bool, store: SceneStore, catalog: EventCatalogModel = .init(), now: Date = Date()) {
         hasCommittedDocument = hasSavedScene
@@ -39,6 +40,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false; window.delegate = self; window.center()
         buildWindow(window)
         state.onUpdate = { [weak self] in self?.update($0) }
+        canvasController.onEditClock = { [weak self] in self?.inspectorController.clock.focus() }
         canvasController.onEditCountdown = { [weak self] in self?.inspectorController.countdown.focus() }
         canvasController.onPickReplacement = { [weak self] id in self?.pick(.replace(id)) }
         canvasController.onPaste = { [weak self] board, target in self?.paste(board, drop: target) ?? false }
@@ -54,20 +56,20 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
     func refresh(at now: Date) { canvasController.refresh(at: now); inspectorController.countdown.refresh(at: now) }
-    func showEditor() { NSApp.activate(ignoringOtherApps: true); window?.makeKeyAndOrderFront(nil); canvas.focus() }
+    func showEditor() { onVisibilityChange?(true); NSApp.activate(ignoringOtherApps: true); window?.makeKeyAndOrderFront(nil); canvas.focus() }
     func setPersistenceBlocked(_ message: String) {
         blocked = message; pendingSave?.cancel(); pendingSave = nil; showError(message)
     }
     func flush() { // Also useful from applicationWillTerminate, when there is no windowWillClose.
         window?.makeFirstResponder(nil); canvasController.finishText(); saveIfNeeded()
     }
-    func windowWillClose(_ notification: Notification) { flush() }
+    func windowWillClose(_ notification: Notification) { flush(); onVisibilityChange?(false) }
 
     private func buildWindow(_ window: NSWindow) {
         let root = NSView(); window.contentView = root
         let bar = NSStackView(); bar.spacing = 8; bar.translatesAutoresizingMaskIntoConstraints = false
         let add = NSPopUpButton(frame: .zero, pullsDown: true)
-        add.addItem(withTitle: "Добавить"); add.addItem(withTitle: "Текст"); add.addItem(withTitle: "Заметка"); add.addItem(withTitle: "Фото с устройства…"); add.addItem(withTitle: "Таймер")
+        add.addItem(withTitle: "Добавить"); add.addItem(withTitle: "Текст"); add.addItem(withTitle: "Заметка"); add.addItem(withTitle: "Фото с устройства…"); add.addItem(withTitle: "Таймер"); add.addItem(withTitle: "Часы")
         add.target = self; add.action = #selector(addSelected(_:)); add.setAccessibilityLabel("Добавить")
         func button(_ b: NSButton, _ symbol: String, _ label: String, _ selector: Selector) {
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label); b.bezelStyle = .rounded
@@ -75,6 +77,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         }
         button(undoButton,"arrow.uturn.backward","Отменить",#selector(undoClicked))
         button(redoButton,"arrow.uturn.forward","Повторить",#selector(redoClicked))
+        guides.toolTip = "Приблизительные области системных часов и входа macOS"
         guides.target = self; guides.action = #selector(toggleGuides); guides.state = .on
         clock.target = self; clock.action = #selector(toggleGuides); clock.state = .on
         [add,undoButton,redoButton,guides,clock].forEach { bar.addArrangedSubview($0) }
@@ -105,6 +108,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         if sender.indexOfSelectedItem == 2 { canvasController.createCenteredNote() }
         if sender.indexOfSelectedItem == 3 { pick(.add(canvasController.images.insertionPoint)) }
         if sender.indexOfSelectedItem == 4 { canvasController.createCenteredCountdown() }
+        if sender.indexOfSelectedItem == 5 { canvasController.createCenteredClock() }
     }
     @objc private func undoClicked() { finishFields(); state.undo() }
     @objc private func redoClicked() { finishFields(); state.redo() }

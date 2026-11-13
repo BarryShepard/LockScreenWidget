@@ -7,32 +7,73 @@ final class SceneInspectorController {
     private let state: SceneEditingStateModel
     private let view: SceneInspectorView
     private let families = ["System"] + NSFontManager.shared.availableFontFamilies.sorted()
-    private var rowIDs = [UUID]()
+    private struct LayerRow {
+        let title: String
+        let ids: Set<UUID>
+        let ancestors: [UUID]
+        let groupID: UUID?
+    }
+    private var rowSelections = [Set<UUID>]()
+    private func layerRows() -> [LayerRow] {
+        let leaves = Array(state.scene.elements.reversed())
+        func rows(_ items: [SceneElementModel], depth: Int, ancestors: [UUID]) -> [LayerRow] {
+            var result: [LayerRow] = [], seen = Set<UUID>()
+            for item in items {
+                let path = item.groups ?? []
+                let indent = String(repeating: "  ", count: depth)
+                if path.count > depth {
+                    let group = path[depth]
+                    guard seen.insert(group.id).inserted else { continue }
+                    let children = items.filter { ($0.groups ?? []).dropFirst(depth).first?.id == group.id }
+                    result.append(LayerRow(title: indent + "▾ " + group.name, ids: Set(children.map(\.id)), ancestors: ancestors, groupID: group.id))
+                    result += rows(children, depth: depth+1, ancestors: ancestors + [group.id])
+                } else {
+                    result.append(LayerRow(title: indent + item.name, ids: [item.id], ancestors: ancestors, groupID: nil))
+                }
+            }
+            return result
+        }
+        return rows(leaves, depth: 0, ancestors: [])
+    }
+    private var selectedGroup: SceneGroupMembership? {
+        guard let first = state.selected.first else { return nil }
+        return first.groups?.first { group in
+            Set(state.scene.elements.filter { $0.groups?.contains(where: { $0.id == group.id }) == true }.map(\.id)) == state.selection
+        }
+    }
     let countdown: SceneCountdownInspectorController
+    let clock: SceneClockInspectorController
 
     init(state: SceneEditingStateModel, view: SceneInspectorView, catalog: EventCatalogModel = .init(), now: Date = Date()) {
         countdown = SceneCountdownInspectorController(state: state, view: view.countdown, catalog: catalog, now: now)
+        clock = SceneClockInspectorController(state: state, view: view.clock)
         self.state = state
         self.view = view
         view.onFocus = { [weak self] in self?.onFocus?() }
         view.onSelectionChange = { [weak self] indices in
             guard let self else { return }
-            self.select(ids: Set(indices.compactMap { self.rowIDs.indices.contains($0) ? self.rowIDs[$0] : nil }))
+            self.state.select(Set(indices.filter { self.rowSelections.indices.contains($0) }.flatMap { self.rowSelections[$0] }), expandingGroups: false)
+            self.onFocus?()
         }
         view.onFieldChange = { [weak self] key, raw, label in self?.applyField(key: key, raw: raw, label: label) }
         view.onMenuChange = { [weak self] key, index in self?.applyMenu(key: key, index: index) }
+        view.onAlign = { [weak self] index in
+            guard let alignment = SceneAlignment(rawValue: index) else { return }
+            self?.state.align(alignment); self?.onFocus?()
+        }
         view.onCenter = { [weak self] horizontal in self?.center(horizontal: horizontal) }
         refresh()
     }
 
     func refresh() {
-        rowIDs = state.scene.elements.reversed().map(\.id)
+        rowSelections = layerRows().map(\.ids)
         view.render(makePresentation())
         countdown.refresh()
+        clock.refresh()
     }
 
     func makePresentation() -> SceneInspectorPresentation {
-        let layers = Array(state.scene.elements.reversed())
+        let layers = layerRows()
         let selected = state.selected, texts = selected.filter { $0.kind.hasTypography }
         let notes = selected.filter { $0.kind == .note }
         var menus: [String: SceneInspectorMenuPresentation] = [
@@ -41,11 +82,15 @@ final class SceneInspectorController {
             "align": .init(items: ["Слева", "По центру", "Справа"], selectedIndex: nil),
             "valign": .init(items: ["Сверху", "По центру", "Снизу"], selectedIndex: nil)
         ]
-        let selectedRows = IndexSet(layers.indices.filter { state.selection.contains(layers[$0].id) })
+        let fullySelectedGroups = Set(layers.filter { $0.groupID != nil && $0.ids.isSubset(of: state.selection) }.compactMap(\.groupID))
+        let selectedRows = IndexSet(layers.indices.filter { index in
+            let row = layers[index]
+            return row.ids.isSubset(of: state.selection) && row.ancestors.allSatisfy { !fullySelectedGroups.contains($0) }
+        })
         if selected.isEmpty {
             let width = Int(clampingScene: state.scene.canvasSize.width)
             let height = Int(clampingScene: state.scene.canvasSize.height)
-            return SceneInspectorPresentation(layers: layers.map(\.name), selectedRows: selectedRows,
+            return SceneInspectorPresentation(layers: layers.map(\.title), selectedRows: selectedRows,
                 selectionTitle: "Композиция",
                 emptyMessage: "Основной экран · \(width) × \(height) pt\nВыберите слой на холсте или в списке.",
                 showsTextControls: false, fields: [:], menus: menus, missingFontMessage: nil)
@@ -58,12 +103,12 @@ final class SceneInspectorController {
         func field(_ key: String, _ value: String?) {
             fields[key] = .init(text: value ?? "", placeholder: value == nil ? "Разные" : nil)
         }
-        field("name", uniform(selected.map(\.name)))
+        field("name", selectedGroup?.name ?? uniform(selected.map(\.name)))
         let group = selected.count > 1 ? SceneGeometry.bounds(selected) : nil
         field("x", (group?.minX ?? selected.first?.frame.minX).map(number))
         field("y", (group?.minY ?? selected.first?.frame.minY).map(number))
-        field("w", uniform(selected.map { $0.frame.width }).map(number))
-        field("h", uniform(selected.map { $0.frame.height }).map(number))
+        field("w", (selectedGroup != nil ? SceneGeometry.bounds(selected)?.width : uniform(selected.map { $0.frame.width })).map(number))
+        field("h", (selectedGroup != nil ? SceneGeometry.bounds(selected)?.height : uniform(selected.map { $0.frame.height })).map(number))
         field("opacity", uniform(selected.map { $0.opacity * 100 }).map(number))
 
         if !notes.isEmpty {
@@ -90,10 +135,10 @@ final class SceneInspectorController {
                 missingFontMessage = "Нет шрифта \(unavailable.sorted().joined(separator: ", ")). Показан системный."
             }
         }
-        return SceneInspectorPresentation(layers: layers.map(\.name), selectedRows: selectedRows,
-            selectionTitle: selected.count == 1 ? "Свойства слоя" : "Выделено: \(selected.count)",
+        return SceneInspectorPresentation(layers: layers.map(\.title), selectedRows: selectedRows,
+            selectionTitle: selectedGroup != nil ? "Свойства группы" : selected.count == 1 ? "Свойства слоя" : "Выделено: \(selected.count)",
             emptyMessage: nil, showsTextControls: !texts.isEmpty,
-            fields: fields, menus: menus, missingFontMessage: missingFontMessage, showsNoteControls: !notes.isEmpty, overflowMessage: notes.contains(where: SceneTextLayout.overflows) ? "Текст не помещается в заметке." : nil)
+            fields: fields, menus: menus, missingFontMessage: missingFontMessage, showsNoteControls: !notes.isEmpty, overflowMessage: notes.contains(where: SceneTextLayout.overflows) ? "Текст не помещается в заметке." : nil, canAlign: state.selectionUnits().count > 1)
     }
 
     func select(ids: Set<UUID>) {
@@ -147,6 +192,25 @@ final class SceneInspectorController {
         guard valid else {
             onError?("Проверьте значение поля «\(label)».")
             refresh()
+            return
+        }
+        if key == "name", let group = selectedGroup {
+            state.change { value in
+                for i in value.scene.elements.indices {
+                    value.scene.elements[i].groups = value.scene.elements[i].groups?.map { membership in
+                        var updated = membership
+                        if membership.id == group.id { updated.name = raw }
+                        return updated
+                    }
+                }
+            }
+            onFocus?()
+            return
+        }
+        if (key == "w" || key == "h"), selectedGroup != nil, let bounds = SceneGeometry.bounds(state.selected) {
+            let factor = number! / (key == "w" ? bounds.width : bounds.height)
+            guard factor.isFinite, factor > 0 else { refresh(); return }
+            state.change { $0 = SceneTransformController.scaling($0, factor: factor, anchor: bounds.origin) }
             return
         }
         let group = state.selected.count > 1 ? SceneGeometry.bounds(state.selected) : nil

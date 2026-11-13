@@ -7,6 +7,7 @@ final class SceneCanvasController {
     private let presentationController: ScenePresentationController
     var onPickReplacement: ((UUID) -> Void)?
     var onEditCountdown: (() -> Void)?
+    var onEditClock: (() -> Void)?
     private let catalog: EventCatalogModel
     private var now: Date
     var onPaste: ((NSPasteboard, SceneImageDestination?) -> Bool)?
@@ -134,9 +135,10 @@ final class SceneCanvasController {
         guard view.contains(event.locationInWindow) else { state.select([]); return }
         let hit = textTool ? nil : state.hit(point)
         if event.clickCount == 2, let e = hit {
-            state.select([e.id])
+            state.select([e.id], expandingGroups: false)
             if e.kind.hasEditableText { beginEditing(e, initial: state.value, isNew: false, click: event.locationInWindow) }
             else if e.kind == .countdown { onEditCountdown?() }
+            else if e.kind == .clock { onEditClock?() }
             else { onPickReplacement?(e.id) }
             return
         }
@@ -160,7 +162,7 @@ final class SceneCanvasController {
         dragging = true
         if let target = transform {
             let stretch = event.modifierFlags.contains(.shift)
-            state.preview(SceneTransformController.applying(original, target: target, from: dragStart, to: dragCurrent, stretch: stretch, crop: cropGesture))
+            state.preview(SceneTransformController.applying(original, target: target, from: dragStart, to: dragCurrent, stretch: stretch, crop: cropGesture, centered: event.modifierFlags.contains(.option)))
             groupRestriction = stretch && original.selection.count > 1 && !target.rotation
             return
         }
@@ -188,7 +190,7 @@ final class SceneCanvasController {
             beginNewText(at: dragged ? rect.origin : dragStart, width: dragged ? max(12, rect.width) : nil)
         } else if moveBase != nil { state.finish(from: original) }
         else if !dragged, let id = downID {
-            state.select(shiftDown ? original.selection.symmetricDifference([id]) : [id])
+            state.select(shiftDown ? original.selection.symmetricDifference(state.expandedSelection([id])) : [id])
         }
     }
     private func clearGesture() {
@@ -336,10 +338,22 @@ final class SceneCanvasController {
         state.preview(next); state.finish(from: initial)
         onEditCountdown?()
     }
+    func createCenteredClock() {
+        finishText()
+        let size = CGSize(width: min(600, state.scene.canvasSize.width), height: min(120, state.scene.canvasSize.height))
+        let point = images.insertionPoint
+        var element = SceneElementModel(kind: .clock, frame: CGRect(
+            x: max(0, min(point.x-size.width/2, state.scene.canvasSize.width-size.width)),
+            y: max(0, min(point.y-size.height/2, state.scene.canvasSize.height-size.height)), width: size.width, height: size.height))
+        element.style.fontSize = 80
+        state.change { $0.scene.elements.append(element); $0.selection = [element.id] }
+        onEditClock?()
+    }
     private func editSelection() {
         guard state.selected.count == 1, let element = state.selected.first else { return }
         if element.kind.hasEditableText { beginEditing(element, initial: state.value, isNew: false) }
         else if element.kind == .countdown { onEditCountdown?() }
+        else if element.kind == .clock { onEditClock?() }
         else { onPickReplacement?(element.id) }
     }
     private func keyDown(_ event: NSEvent) -> Bool {
@@ -396,6 +410,8 @@ final class SceneCanvasController {
         case .paste: _ = onPaste?(.general, nil)
         case .duplicate:
             if editingID == nil { state.insertCopies(state.selected) }
+        case .group: finishText(); state.groupSelection()
+        case .ungroup: finishText(); state.ungroupSelection()
         case .undo: state.undo()
         case .redo: state.redo()
         case .forward:

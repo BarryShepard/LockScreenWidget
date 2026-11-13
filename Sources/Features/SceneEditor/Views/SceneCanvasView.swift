@@ -52,7 +52,7 @@ private final class SceneTextContainerView: NSView {
 
 enum SceneCanvasAction {
     case armText, createText, editSelection, finishText, cancel, delete, selectAll
-    case copy, cut, paste, duplicate, undo, redo, forward, backward, front, back
+    case copy, cut, paste, duplicate, undo, redo, forward, backward, front, back, group, ungroup
 }
 
 struct SceneCanvasHandle: Equatable {
@@ -203,16 +203,23 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         s.draw(at: CGPoint(x: point.x+8, y: point.y+4))
     }
     private func drawGuides(in r: CGRect) {
+        // Approximate Sequoia layout calibrated against a 1512 × 982 lock screen.
+        // These are editor guides only; the system remains responsible for login UI.
         let color = NSColor.white.withAlphaComponent(0.33)
+        func label(_ text: String, size: CGFloat, y: CGFloat, weight: NSFont.Weight = .regular) {
+            let value = NSAttributedString(string: text, attributes: [
+                .font: NSFont.systemFont(ofSize: max(6, r.height * size), weight: weight), .foregroundColor: color])
+            value.draw(at: CGPoint(x: r.midX-value.size().width/2, y: r.minY+r.height*y))
+        }
         if clock {
-            let s = NSAttributedString(string: "09:41", attributes: [.font: NSFont.systemFont(ofSize: max(12, r.height*0.105),
-                                                                                               weight: .medium), .foregroundColor: color])
-            s.draw(at: CGPoint(x: r.midX-s.size().width/2, y: r.minY+r.height*0.075))
+            label("Пятница, 13 ноября", size: 0.025, y: 0.091, weight: .medium)
+            label("09:41", size: 0.112, y: 0.126, weight: .medium)
         }
         color.setStroke()
-        let d = r.height*0.065
-        NSBezierPath(ovalIn: CGRect(x: r.midX-d/2, y: r.maxY-r.height*0.17, width: d, height: d)).stroke()
-        let bar = CGRect(x: r.midX-r.width*0.07, y: r.maxY-r.height*0.09, width: r.width*0.14, height: r.height*0.027)
+        let d = r.height*0.055
+        NSBezierPath(ovalIn: CGRect(x: r.midX-d/2, y: r.minY+r.height*0.832, width: d, height: d)).stroke()
+        label("Имя пользователя", size: 0.014, y: 0.898, weight: .medium)
+        let bar = CGRect(x: r.midX-r.width*0.07, y: r.minY+r.height*0.927, width: r.width*0.14, height: r.height*0.027)
         NSBezierPath(roundedRect: bar, xRadius: bar.height/2, yRadius: bar.height/2).stroke()
     }
 
@@ -300,6 +307,8 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     @objc func duplicate(_ sender: Any?) { onAction?(.duplicate) }
     @objc func undo(_ sender: Any?) { onAction?(.undo) }
     @objc func redo(_ sender: Any?) { onAction?(.redo) }
+    @objc func groupSelection(_ sender: Any?) { onAction?(.group) }
+    @objc func ungroupSelection(_ sender: Any?) { onAction?(.ungroup) }
     @objc func bringForward(_ sender: Any?) { onAction?(.forward) }
     @objc func sendBackward(_ sender: Any?) { onAction?(.backward) }
     @objc func bringToFront(_ sender: Any?) { onAction?(.front) }

@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var countdownController: CountdownController?
     private var statusItem: NSStatusItem?
     private var enabledMenu: NSMenuItem?
+    private var openEditors = Set<String>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         logDiagnostic("launch: pid=\(ProcessInfo.processInfo.processIdentifier) version=\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown") revision=\(Bundle.main.infoDictionary?["TEotWSourceRevision"] as? String ?? "unknown")")
@@ -83,6 +84,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let store else { return }
                 lock?.sceneDidChange(scene, store: store)
             }
+            sceneEditor.onVisibilityChange = { [weak self] visible in self?.editorVisibility("scene", visible: visible) }
+            editor.onVisibilityChange = { [weak self] visible in self?.editorVisibility("legacy", visible: visible) }
             sceneEditor.onRevealLegacy = { [weak editor] in editor?.showPreview() }
             editor.onSettingsChange = { [weak lock] in lock?.settingsDidChange() }
             editor.onToggleEnabled = { [weak lock] in lock?.toggleEnabled() }
@@ -125,6 +128,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let directory = temporarySceneDirectory { try? FileManager.default.removeItem(at: directory) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    private func editorVisibility(_ id: String, visible: Bool) {
+        if visible { openEditors.insert(id) } else { openEditors.remove(id) }
+        let policy: NSApplication.ActivationPolicy = openEditors.isEmpty ? .accessory : .regular
+        let applied = NSApp.setActivationPolicy(policy)
+        logDiagnostic("editor-activation: policy=\(policy == .regular ? "regular" : "accessory") applied=\(applied) openEditors=\(openEditors.count)")
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        sceneEditorController?.showEditor()
+        return true
+    }
     @objc private func showSceneEditor() { sceneEditorController?.showEditor() }
 
     /// Nil targets deliberately preserve the native text responder chain.
@@ -148,6 +161,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item("На слой назад", "sendBackward:", "[")
         item("На передний план", "bringToFront:", "]", shift: true)
         item("На задний план", "sendToBack:", "[", shift: true)
+        edit.addItem(.separator())
+        item("Сгруппировать", "groupSelection:", "g")
+        item("Разгруппировать", "ungroupSelection:", "g", shift: true)
         return edit
     }
 

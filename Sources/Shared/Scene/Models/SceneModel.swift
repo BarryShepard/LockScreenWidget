@@ -1,9 +1,9 @@
 import Foundation
 
 enum SceneElementKind: String, Codable {
-    case text, image, note, countdown
+    case text, image, note, countdown, clock
     var hasEditableText: Bool { self == .text || self == .note }
-    var hasTypography: Bool { hasEditableText || self == .countdown }
+    var hasTypography: Bool { hasEditableText || self == .countdown || self == .clock }
     var isImage: Bool { self == .image }
 }
 
@@ -47,6 +47,7 @@ struct SceneNoteModel: Codable, Equatable {
 
 struct SceneElementModel: Codable, Equatable, Identifiable {
     var id: UUID
+    var groups: [SceneGroupMembership]? = nil
     var kind: SceneElementKind
     var name: String
     var frame: CGRect
@@ -61,6 +62,7 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
     var textScaleY: Double? = nil
     var style: SceneTextStyleModel
     var countdown: SceneCountdownModel? = nil
+    var clock: SceneClockModel? = nil
     var note: SceneNoteModel? = nil
     var resolvedNote: SceneNoteModel { note ?? SceneNoteModel() }
     var assetID: String?
@@ -73,7 +75,7 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
          assetID: String? = nil, imageRect: CGRect? = nil) {
         self.id = id
         self.kind = kind
-        self.name = name ?? (kind == .text ? "Текст" : kind == .note ? "Заметка" : kind == .countdown ? "Таймер" : "Изображение")
+        self.name = name ?? (kind == .text ? "Текст" : kind == .note ? "Заметка" : kind == .countdown ? "Таймер" : kind == .clock ? "Часы" : "Изображение")
         self.frame = frame
         self.rotation = rotation
         self.cornerRadius = cornerRadius ?? (kind == .note ? 12 : 0)
@@ -87,6 +89,7 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
         self.assetID = assetID
         self.imageRect = imageRect
         if kind == .countdown { self.countdown = SceneCountdownModel() }
+        if kind == .clock { self.clock = SceneClockModel() }
     }
 }
 
@@ -110,6 +113,7 @@ struct EditorSceneModel: Codable, Equatable {
             throw SceneError.invalid("Размер холста должен быть конечным положительным числом.")
         }
         var identifiers = Set<UUID>()
+        var groupPaths: [UUID: [SceneGroupMembership]] = [:]
         for element in elements {
             guard identifiers.insert(element.id).inserted else {
                 throw SceneError.invalid("В документе повторяется идентификатор элемента.")
@@ -121,6 +125,18 @@ struct EditorSceneModel: Codable, Equatable {
                   [element.textScaleX, element.textScaleY].allSatisfy({ $0.map { $0.isFinite && $0 > 0 } ?? true }) else {
                 throw SceneError.invalid("У элемента «\(element.name)» некорректные размеры или параметры отображения.")
             }
+            let path = element.groups ?? []
+            guard path.count <= 32, Set(path.map(\.id)).count == path.count else {
+                throw SceneError.invalid("Некорректная вложенность групп.")
+            }
+            for (index, group) in path.enumerated() {
+                let prefix = Array(path.prefix(index+1))
+                guard !group.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      groupPaths[group.id].map({ $0 == prefix }) ?? true else {
+                    throw SceneError.invalid("У группы неоднозначное имя или положение в иерархии.")
+                }
+                groupPaths[group.id] = prefix
+            }
             if let note = element.note {
                 guard note.padding.isFinite, note.padding >= 0,
                       [note.background.red, note.background.green, note.background.blue, note.background.alpha]
@@ -130,6 +146,12 @@ struct EditorSceneModel: Codable, Equatable {
             }
             if element.kind == .countdown && element.countdown == nil {
                 throw SceneError.invalid("У таймера отсутствуют параметры отсчёта.")
+            }
+            if element.kind == .clock && element.clock == nil {
+                throw SceneError.invalid("У часов отсутствуют параметры времени.")
+            }
+            if let zone = element.clock?.timeZoneID, TimeZone(identifier: zone) == nil {
+                throw SceneError.invalid("У часов некорректный часовой пояс.")
             }
             if let timer = element.countdown {
                 guard timer.targetDate.timeIntervalSinceReferenceDate.isFinite,
@@ -150,6 +172,9 @@ struct EditorSceneModel: Codable, Equatable {
             if let assetID = element.assetID, !Self.isSafeAssetID(assetID) {
                 throw SceneError.invalid("У изображения некорректный идентификатор файла.")
             }
+        }
+        guard identifiers.isDisjoint(with: groupPaths.keys) else {
+            throw SceneError.invalid("Идентификаторы групп и слоёв пересекаются.")
         }
         return self
     }

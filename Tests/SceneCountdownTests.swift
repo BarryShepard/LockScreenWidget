@@ -29,6 +29,7 @@ import AppKit
         check(SceneCountdownPresentationController.value(fractional, catalog: .init(), at: now) == "00:01", "Hidden seconds floor whole minutes")
         check(SceneCountdownPresentationController.value(fractional, catalog: .init(), at: now.addingTimeInterval(1)) == "00:00", "Hidden minute boundary")
         check(SceneCountdownPresentationController.wallFields(timer.targetDate,zone:"UTC") == nil, "Extreme target never enters Calendar conversion")
+        try clocks(now)
         wallTimes()
         try modelAndCatalog(now)
         try integration(now)
@@ -37,6 +38,45 @@ import AppKit
         nativeInspectorTransactions()
         print("Scene countdown tests passed")
     }
+    static func clocks(_ now: Date) throws {
+        let utc = TimeZone(secondsFromGMT: 0)!
+        var clock = SceneClockModel()
+        check(SceneClockPresentationController.value(clock, at: now, systemZone: utc) == "12:00", "Clock follows system zone")
+        clock.timeZoneID = "Europe/Moscow"; clock.showsSeconds = true
+        check(SceneClockPresentationController.value(clock, at: now.addingTimeInterval(5), systemZone: utc) == "15:00:05", "Clock stores explicit zone and seconds")
+        clock.uses24Hour = false
+        check(SceneClockPresentationController.value(clock, at: now, systemZone: utc) == "3:00:00 PM", "12-hour clock has period")
+        clock.timeZoneID = "UTC"
+        check(SceneClockPresentationController.value(clock, at: date("2026-11-13T00:00:00Z")) == "12:00:00 AM", "12-hour midnight")
+        check(SceneClockPresentationController.value(clock, at: now) == "12:00:00 PM", "12-hour noon")
+        clock.timeZoneID = "America/New_York"; clock.uses24Hour = true
+        check(SceneClockPresentationController.value(clock, at: date("2026-11-01T05:30:00Z")) == "01:30:00" && SceneClockPresentationController.value(clock, at: date("2026-11-01T06:30:00Z")) == "01:30:00", "Clock handles repeated local hour")
+        var element = SceneElementModel(kind: .clock, frame: CGRect(x: 20,y: 20,width: 300,height: 90))
+        element.clock = SceneClockModel(timeZoneID: "UTC", showsSeconds: false, uses24Hour: true)
+        let scene = EditorSceneModel(canvasSize: CGSize(width: 800,height: 500),elements: [element])
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("clock-tests-"+UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SceneStore(directory: root)
+        try store.save(scene)
+        check(try store.load() == scene, "Clock store round trip")
+        let presenter = ScenePresentationController(store: store)
+        let first = presenter.content(for: scene, at: now)
+        check(presenter.content(for: scene, at: now.addingTimeInterval(1)) == first, "Seconds-hidden clock avoids redraw")
+        check(presenter.content(for: scene, at: now.addingTimeInterval(60)) != first, "Clock updates next minute")
+        let state = SceneEditingStateModel(scene)
+        let view = SceneClockInspectorView(frame: .zero)
+        let controller = SceneClockInspectorController(state: state, view: view)
+        state.select([element.id]); controller.refresh()
+        check(!view.isHidden, "Clock controls visible")
+        view.onChoice?("seconds",1)
+        check(state.scene.elements[0].clock?.showsSeconds == true, "Clock seconds control")
+        state.undo(); check(state.scene == scene, "Clock control is one Undo")
+        var broken = scene; broken.elements[0].clock?.timeZoneID = "Invalid/Zone"
+        do { _ = try broken.validated(); check(false, "Invalid clock zone rejected") } catch {}
+        broken = scene; broken.elements[0].clock = nil
+        do { _ = try broken.validated(); check(false, "Missing clock payload rejected") } catch {}
+    }
+
     static func wallTimes() {
         let helper = SceneCountdownPresentationController.self
         check(helper.resolve(date: "2025-02-29", time: "12:00", zone: "UTC") == .invalid, "Impossible date")

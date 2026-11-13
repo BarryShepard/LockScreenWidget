@@ -459,11 +459,13 @@ private final class FakeSpace: LockScreenSpaceManaging {
 
         let menu = AppDelegate.makeEditMenu()
         let actions = menu.items.filter { !$0.isSeparatorItem }
-        assert(actions.count == 11 && actions.allSatisfy { $0.target == nil })
+        assert(actions.count == 13 && actions.allSatisfy { $0.target == nil })
         assert(actions.map { NSStringFromSelector($0.action!) } == ["undo:", "redo:", "cut:", "copy:", "paste:",
-               "selectAll:", "duplicate:", "bringForward:", "sendBackward:", "bringToFront:", "sendToBack:"])
+               "selectAll:", "duplicate:", "bringForward:", "sendBackward:", "bringToFront:", "sendToBack:", "groupSelection:", "ungroupSelection:"])
         assert(actions[1].keyEquivalentModifierMask == [.command, .shift])
         assert(actions[9].keyEquivalent == "]" && actions[10].keyEquivalent == "[")
+        assert(actions[11].keyEquivalent == "g" && actions[11].keyEquivalentModifierMask == [.command])
+        assert(actions[12].keyEquivalent == "g" && actions[12].keyEquivalentModifierMask == [.command, .shift])
 
         var created: [OverlayPanel] = []
         let routing = LockScreenController(model: model, readLockState: { .unlocked }, diagnostic: { _ in }, makePanels: {

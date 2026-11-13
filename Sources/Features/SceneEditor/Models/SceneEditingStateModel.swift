@@ -47,8 +47,8 @@ final class SceneEditingStateModel {
     var canRedo: Bool { !future.isEmpty }
     init(_ scene: EditorSceneModel) { value = SceneSnapshot(scene: scene, selection: []) }
 
-    func select(_ ids: Set<UUID>) {
-        let valid = ids.intersection(scene.elements.map(\.id))
+    func select(_ ids: Set<UUID>, expandingGroups: Bool = true) {
+        let valid = (expandingGroups ? expandedSelection(ids) : ids).intersection(scene.elements.map(\.id))
         guard valid != selection else { return }
         value.selection = valid
         onUpdate?(.selection)
@@ -57,7 +57,7 @@ final class SceneEditingStateModel {
         scene.elements.last { SceneGeometry.intersects($0, CGRect(origin: point, size: .zero)) }
     }
     func marquee(_ rect: CGRect) -> Set<UUID> {
-        Set(scene.elements.filter { SceneGeometry.intersects($0, rect) }.map(\.id))
+        expandedSelection(Set(scene.elements.filter { SceneGeometry.intersects($0, rect) }.map(\.id)))
     }
     /// Preview from a stable starting snapshot. Repeated mouse/typing events do not add history.
     func preview(_ next: SceneSnapshot, typing: Bool = false) {
@@ -131,9 +131,14 @@ final class SceneEditingStateModel {
     }
     static func inserting(_ items: [SceneElementModel], into start: SceneSnapshot, offset: CGFloat) -> SceneSnapshot {
         var v = start
+        var groupIDs: [UUID: UUID] = [:]
         let copies = items.map { item -> SceneElementModel in
             var e = item
             e.id = UUID(); e.frame = item.frame.offsetBy(dx: offset, dy: offset)
+            e.groups = item.groups.map { path in path.map { group in
+                if groupIDs[group.id] == nil { groupIDs[group.id] = UUID() }
+                return SceneGroupMembership(id: groupIDs[group.id]!, name: group.name)
+            } }
             return e
         }
         v.scene.elements += copies; v.selection = Set(copies.map(\.id))

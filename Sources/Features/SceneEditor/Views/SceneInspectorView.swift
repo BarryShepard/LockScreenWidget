@@ -21,6 +21,7 @@ struct SceneInspectorPresentation {
     var missingFontMessage: String?
     var showsNoteControls: Bool = false
     var overflowMessage: String? = nil
+    var canAlign: Bool = false
 }
 
 private final class SceneStackView: NSView { override var isFlipped: Bool { true } }
@@ -39,7 +40,9 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
     var onFieldChange: ((String, String, String) -> Void)?
     var onMenuChange: ((String, Int) -> Void)?
     var onCenter: ((Bool) -> Void)?
+    var onAlign: ((Int) -> Void)?
     let countdown = SceneCountdownInspectorView()
+    let clock = SceneClockInspectorView()
     private let table = SceneLayerTable(), properties = NSStackView()
     private let empty = NSTextField(wrappingLabelWithString: "")
     private let selectionLabel = NSTextField(labelWithString: "Свойства")
@@ -47,6 +50,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
     private var changedField: NSTextField?
     private var rows: [String] = [], syncing = false
     private var textRows = [NSView](), noteRows = [NSView]()
+    private var alignmentButtons: [NSButton] = []
     private let overflow = NSTextField(wrappingLabelWithString: "")
     private let missingFont = NSTextField(wrappingLabelWithString: "")
 
@@ -76,7 +80,25 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         let v = NSButton(title: "По вертикали", target: self, action: #selector(center(_:))); v.tag = 1
         let centers = NSStackView(views: [h,v]); centers.spacing = 4
         [h,v].forEach { $0.controlSize = .small }; properties.addArrangedSubview(centers)
+        let alignmentTitles = ["Левый край", "Центр X", "Правый край", "Верхний край", "Центр Y", "Нижний край"]
+        let alignmentLabel = NSTextField(labelWithString: "Относительно выделения")
+        alignmentLabel.font = .systemFont(ofSize: 11); alignmentLabel.textColor = .secondaryLabelColor
+        properties.addArrangedSubview(alignmentLabel)
+        for row in 0..<2 {
+            let buttons = (0..<3).map { column -> NSButton in
+                let index = row*3+column
+                let button = NSButton(title: alignmentTitles[index], target: self, action: #selector(alignSelection(_:)))
+                button.tag = index; button.controlSize = .mini; button.setAccessibilityLabel(alignmentTitles[index])
+                alignmentButtons.append(button)
+                return button
+            }
+            let stack = NSStackView(views: buttons); stack.spacing = 3; stack.distribution = .fillEqually
+            properties.addArrangedSubview(stack)
+            stack.widthAnchor.constraint(equalTo: properties.widthAnchor).isActive = true
+        }
         addField("opacity", "Непрозр., %")
+        properties.addArrangedSubview(clock)
+        clock.widthAnchor.constraint(equalTo: properties.widthAnchor).isActive = true
         properties.addArrangedSubview(countdown)
         countdown.widthAnchor.constraint(equalTo: properties.widthAnchor).isActive = true
         addMenu("family", "Шрифт")
@@ -142,6 +164,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         if table.selectedRowIndexes != presentation.selectedRows {
             table.selectRowIndexes(presentation.selectedRows, byExtendingSelection: false)
         }
+        alignmentButtons.forEach { $0.isEnabled = presentation.canAlign }
         selectionLabel.stringValue = presentation.selectionTitle
         properties.isHidden = presentation.emptyMessage != nil
         empty.isHidden = presentation.emptyMessage == nil
@@ -168,6 +191,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         missingFont.isHidden = presentation.missingFontMessage == nil
         missingFont.stringValue = presentation.missingFontMessage ?? ""
     }
+    @objc private func alignSelection(_ sender: NSButton) { onAlign?(sender.tag) }
     @objc private func center(_ sender: NSButton) { onCenter?(sender.tag == 0) }
     @objc private func menuChanged(_ menu: NSPopUpButton) {
         let index = menu.indexOfSelectedItem - 1

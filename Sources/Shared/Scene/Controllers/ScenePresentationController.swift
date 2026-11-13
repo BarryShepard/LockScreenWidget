@@ -14,17 +14,20 @@ final class ScenePresentationController {
 
     func content(for scene: EditorSceneModel, catalog: EventCatalogModel = .init(), at now: Date = Date()) -> SceneRenderContent {
         let values = Dictionary(uniqueKeysWithValues: scene.elements.compactMap { element -> (UUID, String)? in
+            if element.kind == .clock, let clock = element.clock {
+                return (element.id, SceneClockPresentationController.value(clock, at: now))
+            }
             guard element.kind == .countdown, let timer = element.countdown else { return nil }
             return (element.id, SceneCountdownPresentationController.value(timer, catalog: catalog, at: now))
         })
         if let lastPresentation, lastPresentation.scene == scene, lastPresentation.values == values { return lastPresentation.content }
         let content = SceneRenderContent(canvasSize: scene.canvasSize, elements: scene.elements.map { original in
             var element = original
-            if element.kind == .countdown { element.text = values[element.id] ?? "0 дней 00:00:00" }
+            if element.kind == .countdown || element.kind == .clock { element.text = values[element.id] ?? "0 дней 00:00:00" }
             let box = CGRect(origin: .zero, size: element.frame.size)
             let drawing: SceneRenderDrawing
             switch element.kind {
-            case .text, .note, .countdown:
+            case .text, .note, .countdown, .clock:
                 let y = SceneTextLayout.yOffset(element)
                 let rect = SceneTextLayout.contentRect(element)
                 let text = NSAttributedString(string: element.text,

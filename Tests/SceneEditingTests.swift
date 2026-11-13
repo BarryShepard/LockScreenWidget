@@ -51,6 +51,15 @@ import AppKit
         state.select([photo.id]); let original = state.value
         let targets = SceneTransformController.targets([photo], scale: 1)
         let corner = targets.first { !$0.rotation && $0.handle.x == 1 && $0.handle.y == 1 }!
+        let centeredDelta = SceneTransformController.rotate(CGPoint(x: 30, y: 20), 37 * .pi/180)
+        let enlarged = SceneTransformController.applying(original, target: corner, from: corner.point,
+            to: CGPoint(x: corner.point.x+centeredDelta.x, y: corner.point.y+centeredDelta.y), stretch: true, crop: false, centered: true)
+        let centeredPhoto = enlarged.scene.elements[0]
+        check(abs(centeredPhoto.frame.midX-photo.frame.midX) < 0.0001 && abs(centeredPhoto.frame.midY-photo.frame.midY) < 0.0001, "Option resize keeps rotated center")
+        check(abs(centeredPhoto.frame.width-180) < 0.0001 && abs(centeredPhoto.frame.height-120) < 0.0001, "Option resize doubles the delta and preserves proportions")
+        check(centeredPhoto.imageRect == CGRect(x: -45, y: -30, width: 270, height: 180), "Centered resize keeps crop")
+        state.preview(enlarged); state.finish(from: original); state.undo()
+        check(state.value == original, "Centered resize is one Undo")
         let grab = CGPoint(x: corner.point.x+3, y: corner.point.y-2)
         check(SceneTransformController.applying(original, target: corner, from: grab, to: grab, stretch: false, crop: false) == original, "Off-center grab does not jump")
         let delta = SceneTransformController.rotate(CGPoint(x: 30, y: 10), 37 * .pi/180)
@@ -179,12 +188,21 @@ import AppKit
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 844, height: 544), styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         func descendants(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(descendants) }
-        func mouse(_ type: NSEvent.EventType, point: CGPoint, count: Int = 1) -> NSEvent {
-            NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: count, pressure: 1)!
+        func mouse(_ type: NSEvent.EventType, point: CGPoint, count: Int = 1, modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: modifiers, timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: count, pressure: 1)!
         }
         let handle = canvas.viewport.viewPoint(CGPoint(x: e.frame.maxX, y: e.frame.maxY))
         canvas.mouseDown(with: mouse(.leftMouseDown, point: handle)); canvas.mouseUp(with: mouse(.leftMouseUp, point: handle))
         check(state.scene.elements[0] == e && !state.canUndo, "No-motion transform has no history")
+        canvas.mouseDown(with: mouse(.leftMouseDown, point: handle, modifiers: .option))
+        let centeredPoint = CGPoint(x: handle.x+30, y: handle.y+20)
+        canvas.mouseDragged(with: mouse(.leftMouseDragged, point: centeredPoint, modifiers: .option))
+        canvas.mouseUp(with: mouse(.leftMouseUp, point: centeredPoint, modifiers: .option))
+        check(state.scene.elements.count == 1 && state.scene.elements[0].frame.width > e.frame.width &&
+              abs(state.scene.elements[0].frame.midX-e.frame.midX) < 0.0001 &&
+              abs(state.scene.elements[0].frame.midY-e.frame.midY) < 0.0001, "Option handle gesture scales about center without duplicating")
+        state.undo(); check(state.scene.elements[0] == e && !state.canUndo, "Option handle gesture has one Undo")
+
         canvas.mouseDown(with: mouse(.leftMouseDown, point: handle))
         canvas.mouseDragged(with: mouse(.leftMouseDragged, point: CGPoint(x: handle.x+30, y: handle.y+20)))
         let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
@@ -812,7 +830,80 @@ import AppKit
         withExtendedLifetime(controller) {}
     }
 
+    static func groupsAndAlignment() throws {
+        var a = item(80); a.rotation = 33
+        let b = item(280), c = item(500)
+        let state = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [a,b,c]))
+        let original = state.scene
+        state.select([a.id,b.id]); state.groupSelection()
+        let ab = state.scene.elements[0].groups!.first!.id
+        check(state.scene.elements[1].groups?.first?.id == ab, "Group shares ancestry")
+        check(state.scene.elements.map(\.frame) == original.elements.map(\.frame), "Grouping preserves geometry and draw order")
+        state.select([a.id]); check(state.selection == [a.id,b.id], "Click expands a group")
+        state.select([a.id], expandingGroups: false); check(state.selection == [a.id], "Direct child selection")
+        state.select([a.id,c.id]); state.groupSelection()
+        let root = state.scene.elements[0].groups!.first!.id
+        check(root != ab && state.scene.elements[0].groups!.count == 2 && state.scene.elements[2].groups!.count == 1, "Nested groups preserve inner ancestry")
+        check(state.selectionUnits().count == 1, "Outer group transforms as one unit")
+        let grouped = state.scene
+        state.groupSelection(); check(state.scene == grouped, "Grouping a single selected group is a no-op")
+        let encoded = try JSONEncoder().encode(grouped)
+        check(try JSONDecoder().decode(EditorSceneModel.self, from: encoded).validated() == grouped, "Nested groups round trip")
+        state.insertCopies(state.selected)
+        let copies = Array(state.scene.elements.suffix(3))
+        check(copies[0].groups![0].id != root && copies[0].groups![1].id != ab && copies[0].groups![0].id == copies[2].groups![0].id, "Copies remap hierarchy together")
+        check(state.selectionUnits().count == 1, "Copied group is independent of original")
+        state.undo(); check(state.scene == grouped, "Duplicate is one Undo")
+        state.ungroupSelection()
+        check(state.scene.elements[0].groups?.first?.id == ab && state.scene.elements[2].groups == nil, "Ungroup preserves nested group")
+        let separated = state.scene
+        state.align(.left)
+        let leftAB = SceneGeometry.bounds(Array(state.scene.elements.prefix(2)))!.minX
+        check(abs(leftAB-state.scene.elements[2].frame.minX) < 0.0001, "Alignment treats the inner group as a unit")
+        check(state.scene.elements[1].frame.minX-state.scene.elements[0].frame.minX == separated.elements[1].frame.minX-separated.elements[0].frame.minX, "Alignment preserves group spacing")
+        state.undo(); check(state.scene == separated, "Alignment is one Undo")
+        for alignment in SceneAlignment.allCases {
+            let independent = SceneEditingStateModel(original)
+            independent.select([a.id,b.id,c.id]); independent.align(alignment)
+            let boxes = independent.selected.map { SceneGeometry.bounds([$0])! }
+            let values = boxes.map { box -> CGFloat in
+                switch alignment {
+                case .left: return box.minX
+                case .horizontalCenter: return box.midX
+                case .right: return box.maxX
+                case .top: return box.minY
+                case .verticalCenter: return box.midY
+                case .bottom: return box.maxY
+                }
+            }
+            check(values.allSatisfy { abs($0-values[0]) < 0.0001 }, "Rotated alignment \(alignment)")
+            independent.undo(); check(independent.scene == original, "Each alignment has one Undo")
+        }
+        state.select([a.id,b.id]); state.ungroupSelection()
+        check(state.scene == original, "Ungroup restores leaf document")
+        var invalid = grouped
+        invalid.elements[1].groups![0].name = "Conflicting name"
+        do { _ = try invalid.validated(); check(false, "Inconsistent group must fail") } catch {}
+        let view = SceneInspectorView(frame: .zero)
+        let inspector = SceneInspectorController(state: state, view: view)
+        state.select([a.id,b.id]); state.groupSelection(); inspector.refresh()
+        check(inspector.makePresentation().layers.count == 4, "Group appears with children in layer list")
+        inspector.applyField(key: "name", raw: "Фотографии", label: "Название")
+        check(state.selected.allSatisfy { $0.groups?.first?.name == "Фотографии" }, "Rename applies to group membership")
+        check(state.selected.map(\.name) == [a.name,b.name], "Group rename preserves leaf names")
+        let beforeResize = state.scene
+        let oldBounds = SceneGeometry.bounds(state.selected)!
+        inspector.applyField(key: "w", raw: String(Double(oldBounds.width*2)), label: "Ширина")
+        let newBounds = SceneGeometry.bounds(state.selected)!
+        check(abs(newBounds.width-oldBounds.width*2) < 0.0001 && abs(newBounds.height-oldBounds.height*2) < 0.0001, "Numeric group width scales the whole rotated group uniformly")
+        check(abs(newBounds.minX-oldBounds.minX) < 0.0001 && abs(newBounds.minY-oldBounds.minY) < 0.0001, "Numeric group size preserves top-left anchor")
+        state.undo(); check(state.scene == beforeResize, "Numeric group resize is one Undo")
+
+    }
+
     static func main() throws {
+        _ = NSApplication.shared
+        try groupsAndAlignment()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)
