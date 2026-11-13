@@ -64,8 +64,8 @@ final class SceneRenderer {
             ctx.translateBy(x: e.frame.midX, y: e.frame.midY)
             ctx.rotate(by: e.rotation * .pi / 180)
             ctx.translateBy(x: -e.frame.width/2, y: -e.frame.height/2)
-            let box = CGRect(origin: .zero, size: e.frame.size), radius = min(e.cornerRadius, box.width/2, box.height/2)
-            NSBezierPath(roundedRect: box, xRadius: radius, yRadius: radius).addClip()
+            let box = CGRect(origin: .zero, size: e.frame.size)
+            ctx.addPath(SceneCornerPath.path(in: box, radius: e.cornerRadius)); ctx.clip()
             ctx.setAlpha(e.opacity); ctx.beginTransparencyLayer(auxiliaryInfo: nil)
             if e.id == excluding {
                 if case let .note(_, _, background) = e.drawing { background.setFill(); box.fill() }

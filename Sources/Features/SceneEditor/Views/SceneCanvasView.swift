@@ -64,6 +64,7 @@ struct SceneCanvasPresentation: Equatable {
     var content = SceneRenderContent(canvasSize: CGSize(width: 1, height: 1), elements: [])
     var selectionOutlines: [[CGPoint]] = []
     var handles: [SceneCanvasHandle] = []
+    var cornerHandle: CGPoint? = nil
     var selectionBounds: CGRect?
     var marquee: CGRect?
     var dropOutline: [CGPoint]?
@@ -80,6 +81,7 @@ struct SceneTextInputPresentation {
     let yOffset: CGFloat
     var xInset: CGFloat = 0
     var contentClip: CGRect? = nil
+    var cornerRadius: Double = 0
     let attributes: [NSAttributedString.Key: Any]
     let color: NSColor
 }
@@ -128,7 +130,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     }
     func render(_ presentation: SceneCanvasPresentation) {
         guard presentation != self.presentation else { return }
-        let cursorChanged = self.presentation.textTool != presentation.textTool || self.presentation.handles != presentation.handles
+        let cursorChanged = self.presentation.textTool != presentation.textTool || self.presentation.handles != presentation.handles || self.presentation.cornerHandle != presentation.cornerHandle
         self.presentation = presentation
         if cursorChanged { window?.invalidateCursorRects(for: self) }
         needsDisplay = true
@@ -172,6 +174,12 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         for handle in presentation.handles where !handle.rotation {
             let p = viewport.viewPoint(handle.point), r = CGRect(x: p.x-3.5, y: p.y-3.5, width: 7, height: 7)
             NSColor.white.setFill(); r.fill(); NSColor.controlAccentColor.setStroke(); r.frame()
+        }
+        if let point = presentation.cornerHandle {
+            let p = viewport.viewPoint(point)
+            let dot = NSBezierPath(ovalIn: CGRect(x: p.x-4.5, y: p.y-4.5, width: 9, height: 9))
+            NSColor.white.setFill(); dot.fill()
+            NSColor.controlAccentColor.setStroke(); dot.lineWidth = 1.5; dot.stroke()
         }
         if let marquee = presentation.marquee {
             let box = viewport.viewRect(marquee)
@@ -246,6 +254,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         input = field
         let container = SceneTextContainerView(frame: .zero)
         inputContainer = container
+        container.wantsLayer = true
         addSubview(container)
         container.addSubview(field)
         updateText(presentation)
@@ -266,6 +275,12 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         input.frame = CGRect(origin: .zero, size: logicalSize)
         input.textContainerInset = CGSize(width: presentation.xInset, height: presentation.yOffset)
         input.contentClip = presentation.contentClip
+        var unscale = CGAffineTransform(scaleX: 1/presentation.scaleX, y: 1/presentation.scaleY)
+        let mask = CAShapeLayer()
+        mask.path = SceneCornerPath.path(in: CGRect(origin: .zero, size: presentation.frame.size),
+            radius: presentation.cornerRadius).copy(using: &unscale)
+        mask.fillColor = NSColor.black.cgColor
+        container.layer?.mask = mask
         input.needsDisplay = true
         container.frameCenterRotation = presentation.rotation
         // AppKit adjusts the frame origin when bounds scale or rotation changes.

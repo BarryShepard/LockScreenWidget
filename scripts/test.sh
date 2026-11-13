@@ -41,7 +41,9 @@ done
   "$PROJECT_DIR/Tests/SceneTests.swift" -o "$PROJECT_DIR/build/SceneTests"
 "$PROJECT_DIR/build/SceneTests"
 for suite in SceneEditingTests SceneCountdownTests; do
+  TEST_SOURCES=("$PROJECT_DIR/Tests/$suite.swift")
+  if [[ "$suite" == SceneEditingTests ]]; then TEST_SOURCES+=("$PROJECT_DIR/Tests/SceneCornerChecks.swift"); fi
   "$SWIFTC" "${COMMON[@]}" -framework AppKit "${MODELS[@]}" "${SCENE_SOURCES[@]}" \
-    "$PROJECT_DIR/Tests/$suite.swift" -o "$PROJECT_DIR/build/$suite"
+    "${TEST_SOURCES[@]}" -o "$PROJECT_DIR/build/$suite"
   "$PROJECT_DIR/build/$suite" "$PROJECT_DIR"
 done

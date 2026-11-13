@@ -25,6 +25,7 @@ final class SceneCanvasController {
     private var axisX: Bool?
     private var transform: SceneTransformController.Target?
     private var cropGesture = false
+    private var cornerGesture: SceneCornerController.Target?
     private var historyBefore: SceneSnapshot?
     private var widthHistoryHandled = false
     private var widthStart: SceneSnapshot?
@@ -43,6 +44,8 @@ final class SceneCanvasController {
         view.onCursor = { [weak self] point in
             guard let self else { return nil }
             let selected = self.state.selected
+            if self.editingID == nil && !self.textTool,
+               SceneCornerController.hit(point, elements: selected, scale: self.view.viewport.scale) != nil { return .crosshair }
             guard let target = SceneTransformController.hit(point, elements: selected, scale: self.view.viewport.scale) else { return nil }
             return SceneTransformController.cursor(target, rotation: selected.count == 1 ? selected[0].rotation : 0)
         }
@@ -112,8 +115,11 @@ final class SceneCanvasController {
         presentation.content = presentationController.content(for: state.scene, catalog: catalog, at: now)
         presentation.selectionOutlines = selected.map(SceneGeometry.corners)
         presentation.selectionBounds = selected.count > 1 ? SceneGeometry.bounds(selected) : nil
-        presentation.marquee = original != nil && transform == nil && downID == nil && dragging ? dragRect : nil
+        presentation.marquee = original != nil && transform == nil && cornerGesture == nil && downID == nil && dragging ? dragRect : nil
         presentation.handles = editingID == nil && !textTool ? SceneTransformController.targets(selected, scale: view.viewport.scale).map { SceneCanvasHandle(point: $0.point, rotation: $0.rotation) } : []
+        if editingID == nil && !textTool {
+            presentation.cornerHandle = SceneCornerController.target(selected, scale: view.viewport.scale)?.point
+        }
         presentation.textTool = textTool
         presentation.editingID = editingID
         switch drop {
@@ -122,6 +128,9 @@ final class SceneCanvasController {
         case .some(.replace(let id)):
             presentation.badge = "Заменить фото"
             presentation.dropOutline = state.scene.elements.first { $0.id == id }.map(SceneGeometry.corners)
+        case .none where cornerGesture != nil:
+            let radius = state.selected.last?.effectiveCornerRadius ?? 0
+            presentation.badge = String(format: "Скругление: %.1f pt", radius)
         case .none:
             presentation.badge = groupRestriction ? "Группа: доступно только пропорциональное масштабирование" : (textTool ? "Щёлкните или протяните рамку для текста" : nil)
         }
@@ -142,6 +151,11 @@ final class SceneCanvasController {
             else { onPickReplacement?(e.id) }
             return
         }
+        if !textTool, let target = SceneCornerController.hit(point, elements: state.selected, scale: view.viewport.scale) {
+            dragStart = point; dragCurrent = point; original = state.value
+            cornerGesture = target; dragging = false
+            return
+        }
         if !textTool, let target = SceneTransformController.hit(point, elements: state.selected, scale: view.viewport.scale) {
             dragStart = point; dragCurrent = point; original = state.value
             transform = target; cropGesture = event.modifierFlags.contains(.command) && state.selected.count == 1 && state.selected[0].kind == .image && !target.rotation
@@ -160,6 +174,10 @@ final class SceneCanvasController {
         var dx = dragCurrent.x - dragStart.x, dy = dragCurrent.y - dragStart.y
         guard dragging || hypot(dx,dy)*view.viewport.scale >= 3 else { return }
         dragging = true
+        if let target = cornerGesture {
+            state.preview(SceneCornerController.applying(original, target: target, from: dragStart, to: dragCurrent))
+            return
+        }
         if let target = transform {
             let stretch = event.modifierFlags.contains(.shift)
             state.preview(SceneTransformController.applying(original, target: target, from: dragStart, to: dragCurrent, stretch: stretch, crop: cropGesture, centered: event.modifierFlags.contains(.option)))
@@ -185,7 +203,7 @@ final class SceneCanvasController {
         dragCurrent = view.scenePoint(event.locationInWindow)
         let rect = dragRect, dragged = dragging
         defer { clearGesture() }
-        if transform != nil { state.finish(from: original) }
+        if transform != nil || cornerGesture != nil { state.finish(from: original) }
         else if textTool {
             beginNewText(at: dragged ? rect.origin : dragStart, width: dragged ? max(12, rect.width) : nil)
         } else if moveBase != nil { state.finish(from: original) }
@@ -197,6 +215,7 @@ final class SceneCanvasController {
         original = nil
         transform = nil
         cropGesture = false
+        cornerGesture = nil
         groupRestriction = false
         moveBase = nil
         downID = nil
@@ -223,6 +242,7 @@ final class SceneCanvasController {
                                    yOffset: SceneTextLayout.yOffset(element),
                                    xInset: SceneTextLayout.contentRect(element).minX,
                                    contentClip: element.kind == .note ? SceneTextLayout.contentRect(element) : nil,
+                                   cornerRadius: element.effectiveCornerRadius,
                                    attributes: SceneTextLayout.attributes(element.style),
                                    color: SceneTextLayout.color(element.style.color))
     }
@@ -267,6 +287,9 @@ final class SceneCanvasController {
         next.scene.elements[index].frame.origin.y += shift.y
         next.scene.elements[index].autoTextWidth = false
         SceneTextLayout.fit(&next.scene.elements[index], minimumHeight: 1)
+        if next.scene.elements[index].frame.size != element.frame.size {
+            next.scene.elements[index].cornerRadius = min(next.scene.elements[index].cornerRadius, next.scene.elements[index].maximumCornerRadius)
+        }
         state.preview(next)
         if phase == 2 {
             let historyID = state.finish(from: start); initialText = state.value; widthStart = nil

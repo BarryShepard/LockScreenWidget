@@ -27,10 +27,7 @@ final class SceneCountdownInspectorController {
             guard self.selected?.id == id else { self.refresh(); return }
             self.choose(key: key, index: index)
         }
-        view.onRadius = { [weak self] value in
-            guard let self, let radius = Double(value), radius.isFinite, radius >= 0 else { return }
-            self.state.editSelected { if $0.kind == .countdown { $0.cornerRadius = radius } }
-        }
+
     }
     private var selected: SceneElementModel? {
         guard state.selected.count == 1, let element = state.selected.first, element.kind == .countdown else { return nil }
@@ -61,7 +58,7 @@ final class SceneCountdownInspectorController {
         view.render(.init(source: timer.source == .custom ? 0 : 1, date: draft?.date ?? wall?.date ?? "",
             time: draft?.time ?? wall?.time ?? "", zones: availableZones, zone: availableZones.firstIndex(of: timer.timeZoneID)!,
             format: [.daysAndTime, .totalHours, .days].firstIndex(of: timer.format)!, seconds: timer.showsSeconds,
-            radius: String(format: "%g", element.cornerRadius), message: message(timer), occurrences: occurrences))
+            message: message(timer), occurrences: occurrences))
     }
     private func message(_ timer: SceneCountdownModel) -> String {
         if timer.source == .apocalypse {

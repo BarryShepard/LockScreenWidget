@@ -53,6 +53,8 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
     var frame: CGRect
     var rotation: Double
     var cornerRadius: Double
+    var maximumCornerRadius: Double { Double(min(frame.width, frame.height)/2) }
+    var effectiveCornerRadius: Double { min(cornerRadius, maximumCornerRadius) }
     var opacity: Double
     var text: String
     /// Absent in older documents, which retain their explicit frame width.

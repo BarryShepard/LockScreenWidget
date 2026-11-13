@@ -8,7 +8,6 @@ struct SceneCountdownInspectorPresentation {
     var zone: Int
     var format: Int
     var seconds: Bool
-    var radius: String
     var message: String
     var occurrences: [String]
 }
@@ -18,13 +17,11 @@ final class SceneCountdownInspectorView: NSStackView, NSTextFieldDelegate {
     var onBeginWallEdit: (() -> UUID?)?
     var onEndWallEdit: ((UUID, String, String, Bool) -> Void)?
     var onChoice: ((UUID, String, Int) -> Void)?
-    var onRadius: ((String) -> Void)?
     private let source = NSPopUpButton(), zone = NSPopUpButton(), format = NSPopUpButton(), occurrence = NSPopUpButton()
-    private let date = NSTextField(), time = NSTextField(), radius = NSTextField()
+    private let date = NSTextField(), time = NSTextField()
     private let seconds = NSButton(checkboxWithTitle: "Показывать секунды", target: nil, action: nil)
     private let message = NSTextField(wrappingLabelWithString: "")
     private var representedID: UUID?
-    private var radiusChanged = false
     private struct WallEdit {
         let token: UUID
         let field: ObjectIdentifier
@@ -54,9 +51,8 @@ final class SceneCountdownInspectorView: NSStackView, NSTextFieldDelegate {
         format.addItems(withTitles: ["Дни и время", "Суммарные часы", "Только дни"])
         row("Дата", date); date.placeholderString = "YYYY-MM-DD"
         row("Время", time); time.placeholderString = "HH:mm[:ss]"
-        for field in [date,time,radius] { field.delegate = self; field.usesSingleLineMode = true }
+        for field in [date,time] { field.delegate = self; field.usesSingleLineMode = true }
         seconds.target = self; seconds.action = #selector(toggleSeconds); addArrangedSubview(seconds)
-        row("Радиус, pt",radius)
         addArrangedSubview(occurrence); occurrence.setAccessibilityLabel("Повтор часа")
         message.textColor = .secondaryLabelColor; addArrangedSubview(message)
         message.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
@@ -77,7 +73,6 @@ final class SceneCountdownInspectorView: NSStackView, NSTextFieldDelegate {
         zone.selectItem(at: p.zone); zone.toolTip = p.zones.indices.contains(p.zone) ? p.zones[p.zone] : nil
         if date.currentEditor() == nil { date.stringValue = p.date }
         if time.currentEditor() == nil { time.stringValue = p.time }
-        if radius.currentEditor() == nil { radius.stringValue = p.radius }
         date.isEnabled = p.source == 0; time.isEnabled = p.source == 0; zone.isEnabled = p.source == 0
         seconds.state = p.seconds ? .on : .off; seconds.isEnabled = p.format != 2
         let choices = ["Выберите вхождение…"] + p.occurrences
@@ -117,7 +112,6 @@ final class SceneCountdownInspectorView: NSStackView, NSTextFieldDelegate {
     }
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
-        if field === radius { radiusChanged = true; return }
         beginWallEdit(field)
         guard wallEdit?.field == ObjectIdentifier(field) else { return }
         let text = field.currentEditor()?.string ?? field.stringValue
@@ -126,10 +120,7 @@ final class SceneCountdownInspectorView: NSStackView, NSTextFieldDelegate {
     }
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
-        if field === radius {
-            guard radiusChanged else { return }
-            radiusChanged = false; onRadius?(field.stringValue); return
-        }
+
         guard var edit = wallEdit, edit.field == ObjectIdentifier(field) else { return }
         // Use the native final value for this field and the original paired field.
         if field === date { edit.date = field.stringValue } else { edit.time = field.stringValue }

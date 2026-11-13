@@ -55,7 +55,10 @@ final class SceneInspectorController {
             self.state.select(Set(indices.filter { self.rowSelections.indices.contains($0) }.flatMap { self.rowSelections[$0] }), expandingGroups: false)
             self.onFocus?()
         }
-        view.onFieldChange = { [weak self] key, raw, label in self?.applyField(key: key, raw: raw, label: label) }
+        view.onFieldChange = { [weak self] key, raw, label in
+            self?.applyField(key: key, raw: raw, label: label)
+            return self?.makePresentation().fields[key]
+        }
         view.onMenuChange = { [weak self] key, index in self?.applyMenu(key: key, index: index) }
         view.onAlign = { [weak self] index in
             guard let alignment = SceneAlignment(rawValue: index) else { return }
@@ -110,13 +113,13 @@ final class SceneInspectorController {
         field("w", (selectedGroup != nil ? SceneGeometry.bounds(selected)?.width : uniform(selected.map { $0.frame.width })).map(number))
         field("h", (selectedGroup != nil ? SceneGeometry.bounds(selected)?.height : uniform(selected.map { $0.frame.height })).map(number))
         field("opacity", uniform(selected.map { $0.opacity * 100 }).map(number))
+        field("radius", uniform(selected.map { $0.effectiveCornerRadius }).map { number($0) })
 
         if !notes.isEmpty {
             field("background", uniform(notes.map { $0.resolvedNote.background }).map {
                 [$0.red, $0.green, $0.blue, $0.alpha].map { String(format: "%02X", Int(($0 * 255).rounded())) }.joined()
             })
             field("padding", uniform(notes.map { $0.resolvedNote.padding }).map { number($0) })
-            field("radius", uniform(notes.map { $0.cornerRadius }).map { number($0) })
         }
         var missingFontMessage: String?
         if !texts.isEmpty {
@@ -213,6 +216,10 @@ final class SceneInspectorController {
             state.change { $0 = SceneTransformController.scaling($0, factor: factor, anchor: bounds.origin) }
             return
         }
+        if key == "radius" {
+            state.editSelected { $0.cornerRadius = min(number!, $0.maximumCornerRadius) }
+            return
+        }
         let group = state.selected.count > 1 ? SceneGeometry.bounds(state.selected) : nil
         state.editSelected { element in
             switch key {
@@ -229,13 +236,13 @@ final class SceneInspectorController {
                     element.frame.size.width = number!
                     if element.kind == .text { element.autoTextWidth = false }
                 } else { element.frame.size.height = number! }
+                element.cornerRadius = min(element.cornerRadius, element.maximumCornerRadius)
             case "opacity": element.opacity = number! / 100
-            case "background", "padding", "radius":
+            case "background", "padding":
                 guard element.kind == .note else { return }
                 var note = element.resolvedNote
                 if key == "background" { note.background = color! }
                 if key == "padding" { note.padding = number! }
-                if key == "radius" { element.cornerRadius = number! }
                 element.note = note
             default:
                 guard element.kind.hasTypography else { return }

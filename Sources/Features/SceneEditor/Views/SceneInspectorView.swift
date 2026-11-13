@@ -37,7 +37,7 @@ private final class SceneLayerTable: NSTableView {
 final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     var onFocus: (() -> Void)?
     var onSelectionChange: ((IndexSet) -> Void)?
-    var onFieldChange: ((String, String, String) -> Void)?
+    var onFieldChange: ((String, String, String) -> SceneInspectorFieldPresentation?)?
     var onMenuChange: ((String, Int) -> Void)?
     var onCenter: ((Bool) -> Void)?
     var onAlign: ((Int) -> Void)?
@@ -96,6 +96,7 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
             properties.addArrangedSubview(stack)
             stack.widthAnchor.constraint(equalTo: properties.widthAnchor).isActive = true
         }
+        addField("radius", "Радиус, pt")
         addField("opacity", "Непрозр., %")
         properties.addArrangedSubview(clock)
         clock.widthAnchor.constraint(equalTo: properties.widthAnchor).isActive = true
@@ -109,7 +110,6 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         addMenu("valign", "По высоте")
         addField("background", "Фон, HEX", note: true)
         addField("padding", "Отступ, pt", note: true)
-        addField("radius", "Радиус, pt", note: true)
         overflow.textColor = .systemOrange; properties.addArrangedSubview(overflow)
         missingFont.textColor = .secondaryLabelColor; properties.addArrangedSubview(missingFont)
         NSLayoutConstraint.activate([
@@ -207,6 +207,10 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         // Merely visiting a mixed field must not apply its placeholder to the selection.
         guard changedField === field else { return }
         changedField = nil
-        onFieldChange?(key, field.stringValue, field.accessibilityLabel() ?? key)
+        if let normalized = onFieldChange?(key, field.stringValue, field.accessibilityLabel() ?? key) {
+            // The draft has ended, so clamped/invalid input can now be normalized.
+            field.stringValue = normalized.text
+            field.placeholderString = normalized.placeholder
+        }
     }
 }

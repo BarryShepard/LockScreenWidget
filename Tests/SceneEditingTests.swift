@@ -903,6 +903,7 @@ import AppKit
 
     static func main() throws {
         _ = NSApplication.shared
+        try SceneCornerChecks.run()
         try groupsAndAlignment()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

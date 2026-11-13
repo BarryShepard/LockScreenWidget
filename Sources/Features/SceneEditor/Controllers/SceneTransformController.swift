@@ -64,6 +64,7 @@ enum SceneTransformController {
     private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x-b.x, a.y-b.y) }
     /// Numeric group dimensions use one uniform transform, preserving rotated children.
     static func scaling(_ start: SceneSnapshot, factor: CGFloat, anchor: CGPoint) -> SceneSnapshot {
+        guard factor != 1 else { return start }
         var next = start
         for i in next.scene.elements.indices where start.selection.contains(next.scene.elements[i].id) {
             var element = next.scene.elements[i]
@@ -74,6 +75,7 @@ enum SceneTransformController {
                 element.imageRect = CGRect(x: image.minX*factor, y: image.minY*factor, width: image.width*factor, height: image.height*factor)
             }
             if element.kind != .note { element.cornerRadius *= factor }
+            element.cornerRadius = min(element.cornerRadius, element.maximumCornerRadius)
             if element.kind.hasTypography && element.kind != .note {
                 element.textScaleX = (element.textScaleX ?? 1)*factor
                 element.textScaleY = (element.textScaleY ?? 1)*factor
@@ -114,6 +116,7 @@ enum SceneTransformController {
             var changed = e
             changed.frame = CGRect(x: center.x+shift.x-(right-left)/2, y: center.y+shift.y-(bottom-top)/2, width: right-left, height: bottom-top)
             changed.imageRect = image.offsetBy(dx: -left, dy: -top)
+            if changed.frame.size != e.frame.size { changed.cornerRadius = min(changed.cornerRadius, changed.maximumCornerRadius) }
             if let i = result.scene.elements.firstIndex(where: { $0.id == e.id }) { result.scene.elements[i] = changed }
             return result
         }
@@ -135,11 +138,13 @@ enum SceneTransformController {
         let newCenter = centered ? center : CGPoint(x: anchor.x+newCenterOffset.x, y: anchor.y+newCenterOffset.y)
         for i in result.scene.elements.indices where start.selection.contains(result.scene.elements[i].id) {
             var e = result.scene.elements[i]
+            let previousSize = e.frame.size
             let offset = CGPoint(x: e.frame.midX-center.x, y: e.frame.midY-center.y)
             let width = e.frame.width*sx, height = e.frame.height*sy
             e.frame = CGRect(x: newCenter.x+offset.x*sx-width/2, y: newCenter.y+offset.y*sy-height/2, width: width, height: height)
             if let image = e.imageRect { e.imageRect = CGRect(x: image.minX*sx, y: image.minY*sy, width: image.width*sx, height: image.height*sy) }
             if e.kind != .note { e.cornerRadius *= min(sx, sy) }
+            if e.frame.size != previousSize { e.cornerRadius = min(e.cornerRadius, e.maximumCornerRadius) }
             if e.kind.hasTypography && e.kind != .note { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
             result.scene.elements[i] = e
         }
