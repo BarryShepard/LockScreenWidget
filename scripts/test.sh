@@ -42,7 +42,7 @@ done
 "$PROJECT_DIR/build/SceneTests"
 for suite in SceneEditingTests SceneCountdownTests; do
   TEST_SOURCES=("$PROJECT_DIR/Tests/$suite.swift")
-  if [[ "$suite" == SceneEditingTests ]]; then TEST_SOURCES+=("$PROJECT_DIR/Tests/SceneCornerChecks.swift"); fi
+  if [[ "$suite" == SceneEditingTests ]]; then TEST_SOURCES+=("$PROJECT_DIR/Tests/SceneCornerChecks.swift" "$PROJECT_DIR/Tests/SceneAffineChecks.swift" "$PROJECT_DIR/Tests/SceneEditorShellChecks.swift" "$PROJECT_DIR/Tests/ScenePlacementChecks.swift"); fi
   "$SWIFTC" "${COMMON[@]}" -framework AppKit "${MODELS[@]}" "${SCENE_SOURCES[@]}" \
     "${TEST_SOURCES[@]}" -o "$PROJECT_DIR/build/$suite"
   "$PROJECT_DIR/build/$suite" "$PROJECT_DIR"

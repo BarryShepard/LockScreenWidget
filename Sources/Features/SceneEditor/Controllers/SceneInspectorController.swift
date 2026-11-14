@@ -2,6 +2,7 @@ import AppKit
 
 final class SceneInspectorController {
     var onFocus: (() -> Void)?
+    var onBeforeLock: (() -> Void)?
     var onError: ((String) -> Void)?
 
     private let state: SceneEditingStateModel
@@ -55,6 +56,13 @@ final class SceneInspectorController {
             self.state.select(Set(indices.filter { self.rowSelections.indices.contains($0) }.flatMap { self.rowSelections[$0] }), expandingGroups: false)
             self.onFocus?()
         }
+        view.onLockToggle = { [weak self] row in
+            guard let self, self.rowSelections.indices.contains(row) else { return }
+            let ids = self.rowSelections[row]
+            self.onBeforeLock?()
+            self.state.toggleLocked(ids)
+            self.refresh()
+        }
         view.onFieldChange = { [weak self] key, raw, label in
             self?.applyField(key: key, raw: raw, label: label)
             return self?.makePresentation().fields[key]
@@ -77,6 +85,11 @@ final class SceneInspectorController {
 
     func makePresentation() -> SceneInspectorPresentation {
         let layers = layerRows()
+        let locks = layers.map { row -> Int in
+            let members = state.scene.elements.filter { row.ids.contains($0.id) }
+            if members.allSatisfy(\.isLocked) { return 1 }
+            return members.contains(where: \.isLocked) ? 2 : 0
+        }
         let selected = state.selected, texts = selected.filter { $0.kind.hasTypography }
         let notes = selected.filter { $0.kind == .note }
         var menus: [String: SceneInspectorMenuPresentation] = [
@@ -96,7 +109,7 @@ final class SceneInspectorController {
             return SceneInspectorPresentation(layers: layers.map(\.title), selectedRows: selectedRows,
                 selectionTitle: "Композиция",
                 emptyMessage: "Основной экран · \(width) × \(height) pt\nВыберите слой на холсте или в списке.",
-                showsTextControls: false, fields: [:], menus: menus, missingFontMessage: nil)
+                showsTextControls: false, fields: [:], menus: menus, missingFontMessage: nil, layerLocks: locks)
         }
 
         func number(_ value: CGFloat) -> String {
@@ -141,7 +154,7 @@ final class SceneInspectorController {
         return SceneInspectorPresentation(layers: layers.map(\.title), selectedRows: selectedRows,
             selectionTitle: selectedGroup != nil ? "Свойства группы" : selected.count == 1 ? "Свойства слоя" : "Выделено: \(selected.count)",
             emptyMessage: nil, showsTextControls: !texts.isEmpty,
-            fields: fields, menus: menus, missingFontMessage: missingFontMessage, showsNoteControls: !notes.isEmpty, overflowMessage: notes.contains(where: SceneTextLayout.overflows) ? "Текст не помещается в заметке." : nil, canAlign: state.selectionUnits().count > 1)
+            fields: fields, menus: menus, missingFontMessage: missingFontMessage, showsNoteControls: !notes.isEmpty, overflowMessage: notes.contains(where: SceneTextLayout.overflows) ? "Текст не помещается в заметке." : nil, canAlign: state.selectionUnits().count > 1, layerLocks: locks)
     }
 
     func select(ids: Set<UUID>) {

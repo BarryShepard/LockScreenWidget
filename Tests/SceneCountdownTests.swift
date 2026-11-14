@@ -242,6 +242,7 @@ import AppKit
     static func countdownTransforms(_ now: Date) throws {
         var timer = SceneElementModel(kind: .countdown,frame: CGRect(x: 100,y: 100,width: 320,height: 80),rotation: 25,cornerRadius: 6)
         timer.countdown = .init(targetDate: now.addingTimeInterval(90000),timeZoneID: "UTC")
+        timer.textScaleX = 1.2; timer.textScaleY = 0.8
         let state = SceneEditingStateModel(EditorSceneModel(canvasSize: CGSize(width: 1200,height: 800),elements: [timer]))
         state.select([timer.id]); let original = state.value
         func resized(_ start: SceneSnapshot, sx: CGFloat, sy: CGFloat, stretch: Bool) -> SceneSnapshot {
@@ -252,28 +253,28 @@ import AppKit
         }
         func near<T: BinaryFloatingPoint>(_ a: T?, _ b: T) -> Bool { a.map { abs($0-b) < 0.00001 } ?? false }
         let proportional = resized(original,sx: 1.5,sy: 1.5,stretch: false)
-        check(near(proportional.scene.elements[0].textScaleX,1.5) && near(proportional.scene.elements[0].textScaleY,1.5), "Countdown proportional corner resize scales digits")
+        check(near(proportional.scene.elements[0].textScaleX,1.2) && near(proportional.scene.elements[0].textScaleY,0.8), "Countdown proportional corner resize preserves digit size")
         check(proportional.scene.elements[0].style == timer.style && proportional.scene.elements[0].countdown == timer.countdown, "Countdown resize retains base typography and deadline options")
         state.preview(proportional); state.finish(from: original)
         let stretched = resized(proportional,sx: 1.25,sy: 1.75,stretch: true)
         let scaled = stretched.scene.elements[0]
-        check(near(scaled.textScaleX,1.875) && near(scaled.textScaleY,2.625), "Shift resize compounds independent countdown text axes")
+        check(near(scaled.textScaleX,1.2) && near(scaled.textScaleY,0.8) && near(scaled.frame.width,600) && near(scaled.frame.height,210), "Free corner resize changes countdown box without stretching digits")
         let anchorBefore = SceneGeometry.corners(timer)[0], anchorAfter = SceneGeometry.corners(scaled)[0]
         check(hypot(anchorBefore.x-anchorAfter.x,anchorBefore.y-anchorAfter.y) < 0.00001, "Rotated countdown resize preserves opposite anchor")
         state.preview(stretched); state.finish(from: proportional)
-        state.undo(); check(state.value == proportional, "Undo Shift resize restores proportional countdown scale")
-        state.undo(); check(state.value == original && !state.canUndo, "Undo proportional resize restores original scales once")
+        state.undo(); check(state.value == proportional, "Undo free box resize restores proportional countdown box")
+        state.undo(); check(state.value == original && !state.canUndo, "Undo proportional box resize restores original once")
         state.redo(); state.redo(); check(state.value == stretched && !state.canRedo, "Redo restores both countdown transforms")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("countdown-transform-tests-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try SceneStore(directory: directory)
         try store.save(state.scene)
         let restored = try store.load()!
-        check(restored == stretched.scene, "Countdown scales and settings persist together")
+        check(restored == stretched.scene, "Countdown box, existing scales and settings persist together")
         let presenter = ScenePresentationController(store: store)
         for instant in [now, now.addingTimeInterval(1)] {
             guard case let .text(text,frame,sx,sy) = presenter.content(for: restored,at: instant).elements[0].drawing else { preconditionFailure("Countdown must render dynamic text") }
-            check(near(sx,1.875) && near(sy,2.625) && near(frame.width,320), "Dynamic presenter applies persisted transform scales and logical width")
+            check(near(sx,1.2) && near(sy,0.8) && near(frame.width,500), "Dynamic presenter reflows live timer within resized box at unchanged font scale")
             check(text.string == SceneCountdownPresentationController.value(timer.countdown!,catalog: .init(),at: instant), "Scaled countdown retains live values on subsequent ticks")
         }
     }

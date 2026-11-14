@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_DIR="$PROJECT_DIR/build/TEotW.app"
+APP_DIR="$PROJECT_DIR/build/Mice.app"
 if [[ "${1:-}" != "--skip-build" ]]; then
   bash "$PROJECT_DIR/scripts/test.sh"
   bash "$PROJECT_DIR/scripts/build.sh" --universal
@@ -11,17 +11,17 @@ OUTPUT="$PROJECT_DIR/build/Distribution"
 mkdir -p "$OUTPUT"
 STAGE="$(mktemp -d "$PROJECT_DIR/build/package.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
-FOLDER="$STAGE/TEotW-$VERSION"
+FOLDER="$STAGE/Mice-$VERSION"
 mkdir -p "$FOLDER"
-/usr/bin/ditto "$APP_DIR" "$FOLDER/TEotW.app"
+/usr/bin/ditto "$APP_DIR" "$FOLDER/Mice.app"
 cp "$PROJECT_DIR/docs/distribution/Read-me-ru.txt" "$FOLDER/Прочитать перед запуском.txt"
 ln -s /Applications "$FOLDER/Applications"
-/usr/bin/codesign --verify --deep --strict "$FOLDER/TEotW.app"
-/usr/bin/lipo "$FOLDER/TEotW.app/Contents/MacOS/TEotW" -verify_arch arm64 x86_64
-ZIP="$OUTPUT/TEotW-$VERSION-universal.zip"
-DMG="$OUTPUT/TEotW-$VERSION-universal.dmg"
+/usr/bin/codesign --verify --deep --strict "$FOLDER/Mice.app"
+/usr/bin/lipo "$FOLDER/Mice.app/Contents/MacOS/Mice" -verify_arch arm64 x86_64
+ZIP="$OUTPUT/Mice-$VERSION-universal.zip"
+DMG="$OUTPUT/Mice-$VERSION-universal.dmg"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$FOLDER" "$ZIP"
-/usr/bin/hdiutil create -volname "TEotW $VERSION" -srcfolder "$FOLDER" -ov -format UDZO "$DMG"
+/usr/bin/hdiutil create -volname "Mice $VERSION" -srcfolder "$FOLDER" -ov -format UDZO "$DMG"
 /usr/bin/hdiutil verify "$DMG"
-(cd "$OUTPUT" && /usr/bin/shasum -a 256 "TEotW-$VERSION-universal.zip" "TEotW-$VERSION-universal.dmg" > SHA256SUMS.txt)
+(cd "$OUTPUT" && /usr/bin/shasum -a 256 "Mice-$VERSION-universal.zip" "Mice-$VERSION-universal.dmg" > SHA256SUMS.txt)
 printf 'ZIP: %s\nDMG: %s\nSignature: ad-hoc, not notarized\n' "$ZIP" "$DMG"

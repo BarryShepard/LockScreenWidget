@@ -23,11 +23,14 @@ enum SceneTransformController {
         let f = single?.frame ?? bounds, a = CGFloat(single?.rotation ?? 0) * .pi/180
         let center = CGPoint(x: f.midX, y: f.midY)
         return handles.flatMap { h -> [Target] in
-            let p = rotate(CGPoint(x: CGFloat(h.x)*f.width/2, y: CGFloat(h.y)*f.height/2), a)
+            let local = CGPoint(x: CGFloat(h.x)*f.width/2, y: CGFloat(h.y)*f.height/2)
+            let p = single?.localVector(local) ?? rotate(local, a)
             let point = CGPoint(x: center.x+p.x, y: center.y+p.y)
             var result = [Target(handle: h, point: point, rotation: false)]
             if h.isCorner {
-                let outward = rotate(CGPoint(x: CGFloat(h.x)*12/scale, y: CGFloat(h.y)*12/scale), a)
+                let direction = single?.localVector(CGPoint(x: CGFloat(h.x), y: CGFloat(h.y))) ?? rotate(CGPoint(x: CGFloat(h.x), y: CGFloat(h.y)), a)
+                let length = max(0.0001, hypot(direction.x, direction.y))
+                let outward = CGPoint(x: direction.x/length*17/scale, y: direction.y/length*17/scale)
                 result.append(Target(handle: h, point: CGPoint(x: point.x+outward.x, y: point.y+outward.y), rotation: true))
             }
             return result
@@ -52,10 +55,10 @@ enum SceneTransformController {
         image.size = CGSize(width: 18, height: 18)
         return NSCursor(image: image, hotSpot: CGPoint(x: 9, y: 9))
     }()
-    static func cursor(_ target: Target, rotation: Double) -> NSCursor {
+    static func cursor(_ target: Target, rotation: Double, linearTransform: CGAffineTransform = .identity) -> NSCursor {
         if target.rotation { return rotationCursor }
         let h = target.handle
-        let vector = rotate(CGPoint(x: CGFloat(h.x), y: CGFloat(h.y)), rotation * .pi/180)
+        let vector = rotate(CGPoint(x: CGFloat(h.x), y: CGFloat(h.y)).applying(linearTransform), rotation * .pi/180)
         let angle = atan2(vector.y, vector.x)
         let octant = (Int((angle / (.pi/4)).rounded()) % 8 + 8) % 8
         let positions: [NSCursor.FrameResizePosition] = [.right, .bottomRight, .bottom, .bottomLeft, .left, .topLeft, .top, .topRight]
@@ -103,7 +106,8 @@ enum SceneTransformController {
             return result
         }
         let h = target.handle
-        let delta = rotate(CGPoint(x: to.x-from.x, y: to.y-from.y), -a)
+        let motion = CGPoint(x: to.x-from.x, y: to.y-from.y)
+        let delta = single?.inverseVector(motion) ?? rotate(motion, -a)
         if crop, let e = single, e.kind == .image {
             let image = e.imageRect ?? CGRect(origin: .zero, size: f.size)
             var left: CGFloat = 0, top: CGFloat = 0, right = f.width, bottom = f.height
@@ -112,7 +116,7 @@ enum SceneTransformController {
             if h.x > 0 { right = min(image.maxX, max(left+minSize, f.width+delta.x)) }
             if h.y < 0 { top = max(image.minY, min(bottom-minSize, delta.y)) }
             if h.y > 0 { bottom = min(image.maxY, max(top+minSize, f.height+delta.y)) }
-            let shift = rotate(CGPoint(x: (left+right-f.width)/2, y: (top+bottom-f.height)/2), a)
+            let shift = e.localVector(CGPoint(x: (left+right-f.width)/2, y: (top+bottom-f.height)/2))
             var changed = e
             changed.frame = CGRect(x: center.x+shift.x-(right-left)/2, y: center.y+shift.y-(bottom-top)/2, width: right-left, height: bottom-top)
             changed.imageRect = image.offsetBy(dx: -left, dy: -top)
@@ -123,7 +127,7 @@ enum SceneTransformController {
         let multiplier: CGFloat = centered ? 2 : 1
         var sx = h.x == 0 ? 1 : (f.width + multiplier*CGFloat(h.x)*delta.x)/f.width
         var sy = h.y == 0 ? 1 : (f.height + multiplier*CGFloat(h.y)*delta.y)/f.height
-        if centered || ((!stretch || single == nil) && !(single?.kind == .note && h.y == 0)) {
+        if centered || !stretch {
             let s: CGFloat
             if h.x == 0 { s = sy } else if h.y == 0 { s = sx }
             else { s = 1 + ((sx-1)*f.width*f.width + (sy-1)*f.height*f.height)/(f.width*f.width+f.height*f.height) }
@@ -132,10 +136,28 @@ enum SceneTransformController {
         let minimum = max(1/f.width, 1/f.height)
         sx = max(minimum, sx); sy = max(minimum, sy)
         let anchorLocal = CGPoint(x: -CGFloat(h.x)*f.width/2, y: -CGFloat(h.y)*f.height/2)
-        let anchorOffset = rotate(anchorLocal, a)
+        let anchorOffset = single?.localVector(anchorLocal) ?? rotate(anchorLocal, a)
         let anchor = CGPoint(x: center.x+anchorOffset.x, y: center.y+anchorOffset.y)
-        let newCenterOffset = rotate(CGPoint(x: -anchorLocal.x*sx, y: -anchorLocal.y*sy), a)
+        let localCenter = CGPoint(x: -anchorLocal.x*sx, y: -anchorLocal.y*sy)
+        let newCenterOffset = single?.localVector(localCenter) ?? rotate(localCenter, a)
         let newCenter = centered ? center : CGPoint(x: anchor.x+newCenterOffset.x, y: anchor.y+newCenterOffset.y)
+        if single == nil && stretch && !centered {
+            guard sx != 1 || sy != 1 else { return start }
+            for i in result.scene.elements.indices where start.selection.contains(result.scene.elements[i].id) {
+                var e = result.scene.elements[i]
+                let mappedCenter = CGPoint(x: newCenter.x+(e.frame.midX-center.x)*sx,
+                                           y: newCenter.y+(e.frame.midY-center.y)*sy)
+                let rotation = SceneLinearTransformModel.rotation(e.rotation * .pi/180)
+                let inverseRotation = SceneLinearTransformModel.rotation(-e.rotation * .pi/180)
+                let map = (e.linearTransform ?? .init()).followed(by: rotation)
+                    .followed(by: .init(a: sx, d: sy)).followed(by: inverseRotation)
+                guard map.isValid else { return start }
+                e.linearTransform = map
+                e.frame.origin = CGPoint(x: mappedCenter.x-e.frame.width/2, y: mappedCenter.y-e.frame.height/2)
+                result.scene.elements[i] = e
+            }
+            return result
+        }
         for i in result.scene.elements.indices where start.selection.contains(result.scene.elements[i].id) {
             var e = result.scene.elements[i]
             let previousSize = e.frame.size
@@ -143,9 +165,11 @@ enum SceneTransformController {
             let width = e.frame.width*sx, height = e.frame.height*sy
             e.frame = CGRect(x: newCenter.x+offset.x*sx-width/2, y: newCenter.y+offset.y*sy-height/2, width: width, height: height)
             if let image = e.imageRect { e.imageRect = CGRect(x: image.minX*sx, y: image.minY*sy, width: image.width*sx, height: image.height*sy) }
-            if e.kind != .note { e.cornerRadius *= min(sx, sy) }
+            let resizingBox = single != nil && e.kind.hasTypography
+            if e.kind == .text && resizingBox && e.frame.width != previousSize.width { e.autoTextWidth = false }
+            if e.kind != .note && !resizingBox { e.cornerRadius *= min(sx, sy) }
             if e.frame.size != previousSize { e.cornerRadius = min(e.cornerRadius, e.maximumCornerRadius) }
-            if e.kind.hasTypography && e.kind != .note { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
+            if e.kind.hasTypography && e.kind != .note && !resizingBox { e.textScaleX = (e.textScaleX ?? 1)*sx; e.textScaleY = (e.textScaleY ?? 1)*sy }
             result.scene.elements[i] = e
         }
         return result

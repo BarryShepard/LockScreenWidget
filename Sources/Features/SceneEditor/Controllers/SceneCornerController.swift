@@ -18,8 +18,8 @@ enum SceneCornerController {
         guard span >= 10/scale else { return nil }
         let radius = CGFloat(element.effectiveCornerRadius)
         let distance = inset + span*(radius/maximum)
-        let offset = SceneTransformController.rotate(CGPoint(x: distance-element.frame.width/2,
-            y: distance-element.frame.height/2), element.rotation * .pi/180)
+        let offset = element.localVector(CGPoint(x: distance-element.frame.width/2,
+            y: distance-element.frame.height/2))
         let point = CGPoint(x: element.frame.midX+offset.x, y: element.frame.midY+offset.y)
         let separate = SceneTransformController.targets(elements, scale: scale).allSatisfy {
             hypot($0.point.x-point.x, $0.point.y-point.y)*scale >= 15
@@ -38,7 +38,7 @@ enum SceneCornerController {
     static func applying(_ start: SceneSnapshot, target: Target, from: CGPoint, to: CGPoint) -> SceneSnapshot {
         guard let primary = start.scene.elements.first(where: { $0.id == target.elementID }),
               start.selection.contains(primary.id) else { return start }
-        let delta = SceneTransformController.rotate(CGPoint(x: to.x-from.x, y: to.y-from.y), -primary.rotation * .pi/180)
+        let delta = primary.inverseVector(CGPoint(x: to.x-from.x, y: to.y-from.y))
         let radius = max(0, min(target.maximumRadius, target.initialRadius+(delta.x+delta.y)/2*target.radiusPerPoint))
         var next = start
         for i in next.scene.elements.indices where start.selection.contains(next.scene.elements[i].id) {

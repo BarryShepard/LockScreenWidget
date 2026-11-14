@@ -19,6 +19,11 @@ enum SceneTransfer {
     static let layerType = NSPasteboard.PasteboardType("local.lockscreenwidget.scene-elements.v1")
     enum Content { case layers([SceneElementModel]), images([SceneImageInput]), text(String) }
 
+    static func canRead(_ board: NSPasteboard, imagesOnly: Bool = false) -> Bool {
+        let types: [NSPasteboard.PasteboardType] = imagesOnly ? [.png, .tiff, .fileURL] : [layerType, .png, .tiff, .fileURL]
+        return board.availableType(from: types) != nil || (!imagesOnly && board.string(forType: .string)?.isEmpty == false)
+    }
+
     static func write(_ elements: [SceneElementModel], to board: NSPasteboard) throws -> Bool {
         guard !elements.isEmpty else { return false }
         let data = try JSONEncoder().encode(elements)

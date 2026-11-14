@@ -47,10 +47,16 @@ final class ScenePresentationController {
                 }
             }
             return SceneRenderElement(id: element.id, frame: element.frame, rotation: element.rotation,
-                cornerRadius: element.cornerRadius, opacity: element.opacity, drawing: drawing)
+                cornerRadius: element.cornerRadius, opacity: element.opacity, drawing: drawing,
+                linearTransform: Self.transform(element))
         })
         lastPresentation = (scene, values, content)
         return content
+    }
+
+    static func transform(_ element: SceneElementModel) -> CGAffineTransform {
+        let m = element.linearTransform ?? .init()
+        return CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: 0, ty: 0)
     }
 
     private func image(_ id: String) -> NSImage? {

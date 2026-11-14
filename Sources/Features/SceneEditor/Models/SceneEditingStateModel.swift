@@ -2,13 +2,11 @@ import Foundation
 
 enum SceneGeometry {
     static func corners(_ e: SceneElementModel) -> [CGPoint] {
-        let f = e.frame, a = CGFloat(e.rotation * .pi / 180), c = cos(a), s = sin(a)
-        return [CGPoint(x: f.minX, y: f.minY), CGPoint(x: f.maxX, y: f.minY),
-                CGPoint(x: f.maxX, y: f.maxY), CGPoint(x: f.minX, y: f.maxY)].map {
-            let x = $0.x - f.midX, y = $0.y - f.midY
-            return CGPoint(x: f.midX + x*c - y*s, y: f.midY + x*s + y*c)
-        }
+        let f = e.frame
+        return [CGPoint.zero, CGPoint(x: f.width, y: 0),
+                CGPoint(x: f.width, y: f.height), CGPoint(x: 0, y: f.height)].map(e.localPoint)
     }
+
     static func bounds(_ elements: [SceneElementModel]) -> CGRect? {
         let p = elements.flatMap(corners)
         guard let x = p.map(\.x).min(), let y = p.map(\.y).min() else { return nil }
@@ -16,11 +14,13 @@ enum SceneGeometry {
     }
     /// Separating-axis test; the bounding box alone selects empty rotated corners.
     static func intersects(_ e: SceneElementModel, _ r: CGRect) -> Bool {
-        let p = corners(e), a = CGFloat(e.rotation * .pi / 180)
+        let p = corners(e)
+        let u = CGPoint(x: p[1].x-p[0].x, y: p[1].y-p[0].y)
+        let v = CGPoint(x: p[3].x-p[0].x, y: p[3].y-p[0].y)
         let q = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
                  CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
-        return [CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1), CGPoint(x: cos(a), y: sin(a)),
-                CGPoint(x: -sin(a), y: cos(a))].allSatisfy { axis in
+        return [CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1), CGPoint(x: -u.y, y: u.x),
+                CGPoint(x: -v.y, y: v.x)].allSatisfy { axis in
             let left = p.map { $0.x * axis.x + $0.y * axis.y }
             let right = q.map { $0.x * axis.x + $0.y * axis.y }
             return left.max()! >= right.min()! && right.max()! >= left.min()!
@@ -54,10 +54,25 @@ final class SceneEditingStateModel {
         onUpdate?(.selection)
     }
     func hit(_ point: CGPoint) -> SceneElementModel? {
-        scene.elements.last { SceneGeometry.intersects($0, CGRect(origin: point, size: .zero)) }
+        scene.elements.last { !$0.isLocked && SceneGeometry.intersects($0, CGRect(origin: point, size: .zero)) }
+    }
+    func selectFromCanvas(_ ids: Set<UUID>) {
+        let unlocked = Set(scene.elements.filter { !$0.isLocked }.map(\.id))
+        select(expandedSelection(ids).intersection(unlocked), expandingGroups: false)
+    }
+    func toggleLocked(_ ids: Set<UUID>) {
+        let items = scene.elements.filter { ids.contains($0.id) }
+        guard !items.isEmpty else { return }
+        let lock = !items.allSatisfy(\.isLocked)
+        change { value in
+            for i in value.scene.elements.indices where ids.contains(value.scene.elements[i].id) {
+                value.scene.elements[i].locked = lock ? true : nil
+            }
+        }
     }
     func marquee(_ rect: CGRect) -> Set<UUID> {
-        expandedSelection(Set(scene.elements.filter { SceneGeometry.intersects($0, rect) }.map(\.id)))
+        let unlocked = Set(scene.elements.filter { !$0.isLocked }.map(\.id))
+        return expandedSelection(Set(scene.elements.filter { !$0.isLocked && SceneGeometry.intersects($0, rect) }.map(\.id))).intersection(unlocked)
     }
     /// Preview from a stable starting snapshot. Repeated mouse/typing events do not add history.
     func preview(_ next: SceneSnapshot, typing: Bool = false) {
@@ -150,9 +165,15 @@ final class SceneEditingStateModel {
         move(dx: horizontal ? scene.canvasSize.width/2 - box.midX : 0,
              dy: horizontal ? 0 : scene.canvasSize.height/2 - box.midY)
     }
-    func insertCopies(_ items: [SceneElementModel]) {
+    func insertCopies(_ items: [SceneElementModel], at point: CGPoint? = nil) {
         guard !items.isEmpty else { return }
-        change { $0 = Self.inserting(items, into: $0, offset: 12) }
+        change { value in
+            var copies = Self.inserting(items, into: value, offset: point == nil ? 12 : 0)
+            if let point, let bounds = SceneGeometry.bounds(items) {
+                copies = Self.moved(copies, dx: point.x-bounds.midX, dy: point.y-bounds.midY)
+            }
+            value = copies
+        }
     }
     func reorder(_ order: SceneLayerOrder) {
         change { v in

@@ -69,7 +69,7 @@ import AppKit
         check(hypot(before.x-after.x, before.y-after.y) < 0.0001, "Opposite rotated corner remains anchored")
         check(abs(resized.scene.elements[0].frame.width / photo.frame.width - resized.scene.elements[0].frame.height / photo.frame.height) < 0.0001, "Corner resize is proportional")
         let stretched = SceneTransformController.applying(original, target: corner, from: grab, to: moved, stretch: true, crop: false)
-        check(abs(stretched.scene.elements[0].frame.width / photo.frame.width - 1.25) < 0.0001 && abs(stretched.scene.elements[0].frame.height / photo.frame.height - 1.125) < 0.0001, "Shift stretches axes independently")
+        check(abs(stretched.scene.elements[0].frame.width / photo.frame.width - 1.25) < 0.0001 && abs(stretched.scene.elements[0].frame.height / photo.frame.height - 1.125) < 0.0001, "Free resize stretches axes independently")
         state.preview(resized); state.finish(from: original); state.undo(); check(state.value == original && !state.canUndo, "One gesture is one undo")
         for h in SceneTransformController.handles {
             let target = targets.first { !$0.rotation && $0.handle == h }!
@@ -106,9 +106,10 @@ import AppKit
         let tiny = SceneTransformController.applying(original, target: corner, from: grab, to: CGPoint(x: grab.x-10000, y: grab.y-10000), stretch: true, crop: false).scene.elements[0]
         check(tiny.frame.width > 0 && tiny.frame.height > 0, "Resize never flips")
         photo.kind = .text; photo.assetID = nil; photo.imageRect = nil
+        photo.textScaleX = 1.4; photo.textScaleY = 0.9
         let textState = SceneEditingStateModel(EditorSceneModel(canvasSize: size, elements: [photo])); textState.select([photo.id])
         let transformed = SceneTransformController.applying(textState.value, target: corner, from: grab, to: moved, stretch: true, crop: false).scene.elements[0]
-        check(transformed.style == photo.style && transformed.textScaleX != nil && transformed.textScaleY != nil, "Text scale is separate from style")
+        check(transformed.style == photo.style && transformed.textScaleX == photo.textScaleX && transformed.textScaleY == photo.textScaleY, "Corner box resize preserves existing font scale")
         let encoded = try! JSONEncoder().encode(transformed)
         check(try! JSONDecoder().decode(SceneElementModel.self, from: encoded) == transformed, "Text scale round trip")
         var legacy = try! JSONSerialization.jsonObject(with: encoded) as! [String: Any]
@@ -904,6 +905,9 @@ import AppKit
     static func main() throws {
         _ = NSApplication.shared
         try SceneCornerChecks.run()
+        try SceneAffineChecks.run()
+        try SceneEditorShellChecks.run()
+        try ScenePlacementChecks.run()
         try groupsAndAlignment()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

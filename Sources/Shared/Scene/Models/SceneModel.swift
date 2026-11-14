@@ -50,8 +50,13 @@ struct SceneElementModel: Codable, Equatable, Identifiable {
     var groups: [SceneGroupMembership]? = nil
     var kind: SceneElementKind
     var name: String
+    /// Canvas picking only; layers remain selectable and editable in the inspector.
+    var locked: Bool? = nil
+    var isLocked: Bool { locked ?? false }
     var frame: CGRect
     var rotation: Double
+    /// Absent in old scenes: identity. Exact group stretches may introduce shear.
+    var linearTransform: SceneLinearTransformModel? = nil
     var cornerRadius: Double
     var maximumCornerRadius: Double { Double(min(frame.width, frame.height)/2) }
     var effectiveCornerRadius: Double { min(cornerRadius, maximumCornerRadius) }
@@ -121,6 +126,7 @@ struct EditorSceneModel: Codable, Equatable {
                 throw SceneError.invalid("В документе повторяется идентификатор элемента.")
             }
             guard Self.validRect(element.frame), element.rotation.isFinite,
+                  element.linearTransform?.isValid ?? true,
                   element.cornerRadius.isFinite, element.cornerRadius >= 0,
                   element.opacity.isFinite, (0...1).contains(element.opacity),
                   element.imageRect.map(Self.validRect) ?? true,

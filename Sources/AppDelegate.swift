@@ -86,7 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             sceneEditor.onVisibilityChange = { [weak self] visible in self?.editorVisibility("scene", visible: visible) }
             editor.onVisibilityChange = { [weak self] visible in self?.editorVisibility("legacy", visible: visible) }
-            sceneEditor.onRevealLegacy = { [weak editor] in editor?.showPreview() }
             editor.onSettingsChange = { [weak lock] in lock?.settingsDidChange() }
             editor.onToggleEnabled = { [weak lock] in lock?.toggleEnabled() }
             editor.onTestPanel = { [weak lock] in lock?.testPanel() }
@@ -139,6 +138,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
     @objc private func showSceneEditor() { sceneEditorController?.showEditor() }
+    @objc private func showAbout() {
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Mice",
+            .credits: NSAttributedString(string: "Редактор личного экрана блокировки для macOS.\nФото, текст, заметки, часы и таймеры в вашей композиции.")
+        ])
+    }
 
     /// Nil targets deliberately preserve the native text responder chain.
     static func makeEditMenu() -> NSMenu {
@@ -169,21 +174,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeMenu(editor: EditorWindowController, lock: LockScreenController) {
         let main = NSMenu()
-        let app = NSMenuItem()
+        let app = NSMenuItem(title: "Mice", action: nil, keyEquivalent: "")
         main.addItem(app)
-        app.submenu = NSMenu()
+        app.submenu = NSMenu(title: "Mice")
+        app.submenu?.addItem(withTitle: "О Mice", action: #selector(showAbout), keyEquivalent: "").target = self
+        app.submenu?.addItem(.separator())
         app.submenu?.addItem(withTitle: "Завершить", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q").target = NSApp
         let edit = NSMenuItem(title: "Правка", action: nil, keyEquivalent: "")
         edit.submenu = Self.makeEditMenu()
         main.addItem(edit)
         NSApp.mainMenu = main
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem?.button?.image = StatusIcon.skull()
+        statusItem?.button?.image = StatusIcon.mouse()
         statusItem?.button?.imagePosition = .imageOnly
-        statusItem?.button?.toolTip = "Редактор экрана блокировки"
+        statusItem?.button?.toolTip = "Mice — личный экран блокировки"
         let menu = NSMenu()
+        menu.addItem(withTitle: "О Mice", action: #selector(showAbout), keyEquivalent: "").target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Открыть редактор экрана", action: #selector(showSceneEditor), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Редактор отсчёта…", action: #selector(EditorWindowController.showPreview), keyEquivalent: "").target = editor
         menu.addItem(.separator())
         enabledMenu = menu.addItem(withTitle: "Показывать при блокировке", action: #selector(LockScreenController.toggleEnabled), keyEquivalent: "")
         enabledMenu?.target = lock

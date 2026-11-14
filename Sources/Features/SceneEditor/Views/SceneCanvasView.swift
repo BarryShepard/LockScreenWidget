@@ -53,6 +53,7 @@ private final class SceneTextContainerView: NSView {
 enum SceneCanvasAction {
     case armText, createText, editSelection, finishText, cancel, delete, selectAll
     case copy, cut, paste, duplicate, undo, redo, forward, backward, front, back, group, ungroup
+    case place(SceneCanvasTool, CGPoint), pasteHere(CGPoint), pasteReplacing(UUID), toggleLock
 }
 
 struct SceneCanvasHandle: Equatable {
@@ -82,6 +83,7 @@ struct SceneTextInputPresentation {
     var xInset: CGFloat = 0
     var contentClip: CGRect? = nil
     var cornerRadius: Double = 0
+    var linearTransform: CGAffineTransform = .identity
     let attributes: [NSAttributedString.Key: Any]
     let color: NSColor
 }
@@ -90,6 +92,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     var onCursor: ((CGPoint) -> NSCursor?)?
     private var cursorTracking: NSTrackingArea?
     var onAction: ((SceneCanvasAction) -> Void)?
+    var onContextMenu: ((CGPoint) -> [SceneCanvasMenuItem])?
     var onMouseDown: ((NSEvent) -> Void)?
     var onMouseDragged: ((NSEvent) -> Void)?
     var onMouseUp: ((NSEvent) -> Void)?
@@ -108,6 +111,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     var renderedContent: SceneRenderContent { presentation.content }
     private var input: SceneInputView?
     private var inputContainer: SceneTextContainerView?
+    private var inputTransformContainer: SceneTextContainerView?
     var viewport: SceneViewport {
         SceneViewport(size: presentation.content.canvasSize, in: bounds.insetBy(dx: 22, dy: 22))
     }
@@ -138,11 +142,24 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let cursorTracking { removeTrackingArea(cursorTracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect], owner: self, userInfo: nil)
+        let area = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .inVisibleRect], owner: self, userInfo: nil)
         addTrackingArea(area); cursorTracking = area
     }
     override func mouseMoved(with event: NSEvent) {
-        let point = scenePoint(event.locationInWindow)
+        updateCursor(at: event.locationInWindow)
+    }
+    override func mouseEntered(with event: NSEvent) { updateCursor(at: event.locationInWindow) }
+    override func cursorUpdate(with event: NSEvent) { updateCursor(at: event.locationInWindow) }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(viewport.rect.intersection(visibleRect), cursor: presentation.textTool ? .crosshair : .arrow)
+    }
+    private func updateCursor(at windowPoint: NSPoint) {
+        let local = convert(windowPoint, from: nil)
+        // Let the live text editor manage its own insertion cursor.
+        guard hitTest(superview?.convert(windowPoint, from: nil) ?? local) === self else { return }
+        guard viewport.rect.contains(local) else { NSCursor.arrow.set(); return }
+        let point = scenePoint(windowPoint)
         (presentation.textTool ? NSCursor.crosshair : (onCursor?(point) ?? .arrow)).set()
     }
     override func mouseExited(with event: NSEvent) { NSCursor.arrow.set() }
@@ -164,7 +181,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         NSBezierPath(rect: viewport.rect).addClip()
-        if guides { drawGuides(in: viewport.rect) }
+        if guides || clock { drawGuides(in: viewport.rect) }
         renderer.draw(presentation.content, in: viewport, excluding: presentation.editingID)
         for outline in presentation.selectionOutlines { drawOutline(outline, color: .controlAccentColor) }
         if let bounds = presentation.selectionBounds {
@@ -223,6 +240,7 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
             label("Пятница, 13 ноября", size: 0.025, y: 0.091, weight: .medium)
             label("09:41", size: 0.112, y: 0.126, weight: .medium)
         }
+        guard guides else { return }
         color.setStroke()
         let d = r.height*0.055
         NSBezierPath(ovalIn: CGRect(x: r.midX-d/2, y: r.minY+r.height*0.832, width: d, height: d)).stroke()
@@ -252,10 +270,14 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         field.typingAttributes = presentation.attributes
         field.insertionPointColor = presentation.color
         input = field
-        let container = SceneTextContainerView(frame: .zero)
+        let container = SceneTextContainerView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         inputContainer = container
         container.wantsLayer = true
-        addSubview(container)
+        let outer = SceneTextContainerView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        outer.clipsToBounds = false
+        inputTransformContainer = outer
+        addSubview(outer)
+        outer.addSubview(container)
         container.addSubview(field)
         updateText(presentation)
         window?.makeFirstResponder(field)
@@ -266,11 +288,15 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
     }
     func updateText(_ presentation: SceneTextInputPresentation) {
         guard let input else { return }
-        let viewport = viewport
-        guard let container = inputContainer else { return }
+        // Hidden split views can have no laid-out canvas yet. Keep a non-singular
+        // provisional native map until onLayout supplies the real viewport.
+        let viewport = bounds.width > 44 && bounds.height > 44 ? self.viewport :
+            SceneViewport(size: presentation.frame.size, in: CGRect(origin: .zero, size: presentation.frame.size))
+        guard let container = inputContainer, let outer = inputTransformContainer else { return }
         container.frameCenterRotation = 0
-        container.frame = viewport.viewRect(presentation.frame)
+        outer.frameCenterRotation = 0
         let logicalSize = CGSize(width: presentation.frame.width / presentation.scaleX, height: presentation.frame.height / presentation.scaleY)
+        container.frame = CGRect(origin: .zero, size: logicalSize)
         container.bounds = CGRect(origin: .zero, size: logicalSize)
         input.frame = CGRect(origin: .zero, size: logicalSize)
         input.textContainerInset = CGSize(width: presentation.xInset, height: presentation.yOffset)
@@ -281,18 +307,33 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
             radius: presentation.cornerRadius).copy(using: &unscale)
         mask.fillColor = NSColor.black.cgColor
         container.layer?.mask = mask
-        input.needsDisplay = true
-        container.frameCenterRotation = presentation.rotation
-        // AppKit adjusts the frame origin when bounds scale or rotation changes.
-        // Anchor the transformed local center to the renderer’s scene center.
+        // A general affine map is rotation × positive scale × rotation (SVD).
+        // Both rotations are native view transforms, so AppKit converts mouse,
+        // glyph, caret and accessibility coordinates through the same geometry.
+        let rotation = CGAffineTransform(rotationAngle: presentation.rotation * .pi/180)
+        let map = CGAffineTransform(scaleX: presentation.scaleX, y: presentation.scaleY)
+            .concatenating(presentation.linearTransform).concatenating(rotation)
+        let x2 = map.a*map.a+map.b*map.b, y2 = map.c*map.c+map.d*map.d
+        let xy = map.a*map.c+map.b*map.d
+        let angle = atan2(2*xy, x2-y2)/2
+        let sx = sqrt(max(0, (x2+y2+hypot(x2-y2, 2*xy))/2))
+        let sy = (map.a*map.d-map.b*map.c)/sx
+        let theta = atan2(map.b*cos(angle)+map.d*sin(angle), map.a*cos(angle)+map.c*sin(angle))
+        outer.frame = CGRect(origin: .zero, size: CGSize(width: logicalSize.width*sx*viewport.scale,
+                                                       height: logicalSize.height*sy*viewport.scale))
+        outer.bounds = CGRect(origin: .zero, size: logicalSize)
+        container.frameCenterRotation = -angle*180 / .pi
+        outer.frameCenterRotation = theta*180 / .pi
         let center = convert(CGPoint(x: logicalSize.width/2, y: logicalSize.height/2), from: container)
         let desired = viewport.viewPoint(CGPoint(x: presentation.frame.midX, y: presentation.frame.midY))
-        container.setFrameOrigin(CGPoint(x: container.frame.origin.x + desired.x-center.x, y: container.frame.origin.y + desired.y-center.y))
+        outer.setFrameOrigin(CGPoint(x: outer.frame.origin.x+desired.x-center.x, y: outer.frame.origin.y+desired.y-center.y))
+        input.needsDisplay = true
         input.alphaValue = max(0.2, presentation.opacity)
     }
     func endText() {
         input?.delegate = nil
-        inputContainer?.removeFromSuperview()
+        inputTransformContainer?.removeFromSuperview()
+        inputTransformContainer = nil
         inputContainer = nil
         input = nil
         needsDisplay = true
@@ -307,7 +348,18 @@ final class SceneCanvasView: NSView, NSTextViewDelegate {
         return false
     }
     func textDidEndEditing(_ notification: Notification) { finishText() }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // The rotated inner view can extend beyond the scaling view's frame.
+        // Route by its inverse coordinates rather than AppKit's intermediate bounds.
+        let local = convert(point, from: superview)
+        if bounds.contains(local), let input, input.bounds.contains(input.convert(local, from: self)) { return input }
+        return super.hitTest(point)
+    }
     override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard contains(event.locationInWindow), let items = onContextMenu?(scenePoint(event.locationInWindow)) else { return nil }
+        return makeContextMenu(items)
+    }
     override func mouseDragged(with event: NSEvent) { onMouseDragged?(event) }
     override func mouseUp(with event: NSEvent) { onMouseUp?(event) }
     override func keyDown(with event: NSEvent) {

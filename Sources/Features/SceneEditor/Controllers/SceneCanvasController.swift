@@ -5,6 +5,9 @@ final class SceneCanvasController {
     let images: SceneImageController
     private let state: SceneEditingStateModel
     private let presentationController: ScenePresentationController
+    var onPickImage: ((CGPoint) -> Void)?
+    var onPasteHere: ((NSPasteboard, CGPoint) -> Bool)?
+    var contextPasteboard: NSPasteboard = .general
     var onPickReplacement: ((UUID) -> Void)?
     var onEditCountdown: (() -> Void)?
     var onEditClock: (() -> Void)?
@@ -13,7 +16,7 @@ final class SceneCanvasController {
     var onPaste: ((NSPasteboard, SceneImageDestination?) -> Bool)?
     var onError: ((String) -> Void)?
     var onRestoreTypedScene: (() -> Void)?
-    private var textTool = false
+    private var placementTool: SceneCanvasTool?
     private var editingID: UUID?
     private var initialText: SceneSnapshot?
     private var newText = false
@@ -31,7 +34,6 @@ final class SceneCanvasController {
     private var widthStart: SceneSnapshot?
     private var widthCheckpointed = false
     private var widthPoint = CGPoint.zero
-    private var groupRestriction = false
     private var drop: SceneImageDestination?
 
     init(state: SceneEditingStateModel, store: SceneStore, catalog: EventCatalogModel = .init(), now: Date = Date()) {
@@ -43,11 +45,12 @@ final class SceneCanvasController {
         view.onAction = { [weak self] action in self?.handle(action); self?.refresh() }
         view.onCursor = { [weak self] point in
             guard let self else { return nil }
+            guard self.editingID == nil, self.placementTool == nil, self.state.selected.allSatisfy({ !$0.isLocked }) else { return nil }
             let selected = self.state.selected
-            if self.editingID == nil && !self.textTool,
-               SceneCornerController.hit(point, elements: selected, scale: self.view.viewport.scale) != nil { return .crosshair }
+            if SceneCornerController.hit(point, elements: selected, scale: self.view.viewport.scale) != nil { return .crosshair }
             guard let target = SceneTransformController.hit(point, elements: selected, scale: self.view.viewport.scale) else { return nil }
-            return SceneTransformController.cursor(target, rotation: selected.count == 1 ? selected[0].rotation : 0)
+            return SceneTransformController.cursor(target, rotation: selected.count == 1 ? selected[0].rotation : 0,
+                linearTransform: selected.count == 1 ? ScenePresentationController.transform(selected[0]) : .identity)
         }
         view.onMouseDown = { [weak self] event in self?.mouseDown(with: event); self?.refresh() }
         view.onMouseDragged = { [weak self] event in self?.mouseDragged(with: event); self?.refresh() }
@@ -98,6 +101,36 @@ final class SceneCanvasController {
             self.refresh()
             return accepted
         }
+        let context = SceneCanvasContextMenuController(state: state)
+        view.onContextMenu = { [weak self] point in
+            guard let self else { return [] }
+            self.finishText()
+            if self.original != nil { self.cancel() }
+            self.placementTool = nil
+            // Commit the old layer's inspector draft before changing selection.
+            self.view.focus()
+            let items = context.items(at: point, board: self.contextPasteboard)
+            self.refresh()
+            return items
+        }
+        refresh()
+    }
+
+    func arm(_ tool: SceneCanvasTool) {
+        if original != nil { cancel() }
+        finishText(); placementTool = tool
+        view.focus(); refresh()
+    }
+
+    func create(_ tool: SceneCanvasTool, at point: CGPoint) {
+        placementTool = nil
+        switch tool {
+        case .text: finishText(); beginNewText(at: point, width: nil)
+        case .note: createCenteredNote(at: point)
+        case .countdown: createCenteredCountdown(at: point)
+        case .clock: createCenteredClock(at: point)
+        case .image: finishText(); onPickImage?(point)
+        }
         refresh()
     }
 
@@ -116,11 +149,11 @@ final class SceneCanvasController {
         presentation.selectionOutlines = selected.map(SceneGeometry.corners)
         presentation.selectionBounds = selected.count > 1 ? SceneGeometry.bounds(selected) : nil
         presentation.marquee = original != nil && transform == nil && cornerGesture == nil && downID == nil && dragging ? dragRect : nil
-        presentation.handles = editingID == nil && !textTool ? SceneTransformController.targets(selected, scale: view.viewport.scale).map { SceneCanvasHandle(point: $0.point, rotation: $0.rotation) } : []
-        if editingID == nil && !textTool {
+        presentation.handles = editingID == nil && placementTool == nil && selected.allSatisfy({ !$0.isLocked }) ? SceneTransformController.targets(selected, scale: view.viewport.scale).map { SceneCanvasHandle(point: $0.point, rotation: $0.rotation) } : []
+        if editingID == nil && placementTool == nil && selected.allSatisfy({ !$0.isLocked }) {
             presentation.cornerHandle = SceneCornerController.target(selected, scale: view.viewport.scale)?.point
         }
-        presentation.textTool = textTool
+        presentation.textTool = placementTool != nil
         presentation.editingID = editingID
         switch drop {
         case .some(.add):
@@ -132,7 +165,7 @@ final class SceneCanvasController {
             let radius = state.selected.last?.effectiveCornerRadius ?? 0
             presentation.badge = String(format: "Скругление: %.1f pt", radius)
         case .none:
-            presentation.badge = groupRestriction ? "Группа: доступно только пропорциональное масштабирование" : (textTool ? "Щёлкните или протяните рамку для текста" : nil)
+            presentation.badge = placementTool?.instruction
         }
         view.render(presentation)
         refreshText()
@@ -140,9 +173,10 @@ final class SceneCanvasController {
 
     private func mouseDown(with event: NSEvent) {
         finishText(); view.focus()
+        state.select(Set(state.selected.filter { !$0.isLocked }.map(\.id)), expandingGroups: false)
         let point = view.scenePoint(event.locationInWindow)
         guard view.contains(event.locationInWindow) else { state.select([]); return }
-        let hit = textTool ? nil : state.hit(point)
+        let hit = placementTool != nil ? nil : state.hit(point)
         if event.clickCount == 2, let e = hit {
             state.select([e.id], expandingGroups: false)
             if e.kind.hasEditableText { beginEditing(e, initial: state.value, isNew: false, click: event.locationInWindow) }
@@ -151,12 +185,12 @@ final class SceneCanvasController {
             else { onPickReplacement?(e.id) }
             return
         }
-        if !textTool, let target = SceneCornerController.hit(point, elements: state.selected, scale: view.viewport.scale) {
+        if placementTool == nil, let target = SceneCornerController.hit(point, elements: state.selected, scale: view.viewport.scale) {
             dragStart = point; dragCurrent = point; original = state.value
             cornerGesture = target; dragging = false
             return
         }
-        if !textTool, let target = SceneTransformController.hit(point, elements: state.selected, scale: view.viewport.scale) {
+        if placementTool == nil, let target = SceneTransformController.hit(point, elements: state.selected, scale: view.viewport.scale) {
             dragStart = point; dragCurrent = point; original = state.value
             transform = target; cropGesture = event.modifierFlags.contains(.command) && state.selected.count == 1 && state.selected[0].kind == .image && !target.rotation
             dragging = false; return
@@ -165,8 +199,8 @@ final class SceneCanvasController {
         dragging = false; axisX = nil; downID = hit?.id
         shiftDown = event.modifierFlags.contains(.shift); optionDown = event.modifierFlags.contains(.option)
         if let id = downID {
-            if !state.selection.contains(id) { state.select(shiftDown ? state.selection.union([id]) : [id]) }
-        } else if !shiftDown && !textTool { state.select([]) }
+            if !state.selection.contains(id) { state.selectFromCanvas(shiftDown ? state.selection.union([id]) : [id]) }
+        } else if !shiftDown && placementTool == nil { state.select([]) }
     }
     private func mouseDragged(with event: NSEvent) {
         guard let original = original else { return }
@@ -179,12 +213,11 @@ final class SceneCanvasController {
             return
         }
         if let target = transform {
-            let stretch = event.modifierFlags.contains(.shift)
+            let stretch = !event.modifierFlags.contains(.shift)
             state.preview(SceneTransformController.applying(original, target: target, from: dragStart, to: dragCurrent, stretch: stretch, crop: cropGesture, centered: event.modifierFlags.contains(.option)))
-            groupRestriction = stretch && original.selection.count > 1 && !target.rotation
             return
         }
-        if textTool { return }
+        if placementTool != nil { return }
         if let downID = downID {
             guard state.selection.contains(downID) || moveBase != nil else { return }
             if moveBase == nil {
@@ -195,7 +228,7 @@ final class SceneCanvasController {
             if let base = moveBase { state.preview(SceneEditingStateModel.moved(base, dx: dx, dy: dy)) }
         } else {
             let ids = state.marquee(dragRect)
-            state.select(shiftDown ? original.selection.union(ids) : ids)
+            state.selectFromCanvas(shiftDown ? original.selection.union(ids) : ids)
         }
     }
     private func mouseUp(with event: NSEvent) {
@@ -204,11 +237,13 @@ final class SceneCanvasController {
         let rect = dragRect, dragged = dragging
         defer { clearGesture() }
         if transform != nil || cornerGesture != nil { state.finish(from: original) }
-        else if textTool {
-            beginNewText(at: dragged ? rect.origin : dragStart, width: dragged ? max(12, rect.width) : nil)
+        else if let tool = placementTool {
+            if tool == .text {
+                beginNewText(at: dragged ? rect.origin : dragStart, width: dragged ? max(12, rect.width) : nil)
+            } else { create(tool, at: dragStart) }
         } else if moveBase != nil { state.finish(from: original) }
         else if !dragged, let id = downID {
-            state.select(shiftDown ? original.selection.symmetricDifference(state.expandedSelection([id])) : [id])
+            state.selectFromCanvas(shiftDown ? original.selection.symmetricDifference(state.expandedSelection([id])) : [id])
         }
     }
     private func clearGesture() {
@@ -216,7 +251,6 @@ final class SceneCanvasController {
         transform = nil
         cropGesture = false
         cornerGesture = nil
-        groupRestriction = false
         moveBase = nil
         downID = nil
         axisX = nil
@@ -227,7 +261,7 @@ final class SceneCanvasController {
         dragCurrent = .zero
     }
     private func beginNewText(at p: CGPoint, width: CGFloat?) {
-        textTool = false
+        placementTool = nil
         let initial = state.value
         var e = SceneElementModel(kind: .text, frame: CGRect(x: p.x, y: p.y, width: width ?? 48, height: 40), text: "")
         e.autoTextWidth = width == nil
@@ -242,7 +276,7 @@ final class SceneCanvasController {
                                    yOffset: SceneTextLayout.yOffset(element),
                                    xInset: SceneTextLayout.contentRect(element).minX,
                                    contentClip: element.kind == .note ? SceneTextLayout.contentRect(element) : nil,
-                                   cornerRadius: element.effectiveCornerRadius,
+                                   cornerRadius: element.effectiveCornerRadius, linearTransform: ScenePresentationController.transform(element),
                                    attributes: SceneTextLayout.attributes(element.style),
                                    color: SceneTextLayout.color(element.style.color))
     }
@@ -269,7 +303,7 @@ final class SceneCanvasController {
         guard let start = widthStart, let index = start.scene.elements.firstIndex(where: { $0.id == id }) else { return }
         let element = start.scene.elements[index]
         let point = view.scenePoint(event.locationInWindow)
-        let delta = SceneTransformController.rotate(CGPoint(x: point.x-widthPoint.x, y: point.y-widthPoint.y), -element.rotation * .pi/180).x
+        let delta = element.inverseVector(CGPoint(x: point.x-widthPoint.x, y: point.y-widthPoint.y)).x
         if abs(delta) < 0.0001 {
             state.preview(start)
             if phase == 2 { widthStart = nil; if widthCheckpointed { initialText = state.value } }
@@ -280,7 +314,7 @@ final class SceneCanvasController {
             initialText = state.value; typed = false; widthCheckpointed = true
         }
         let width = max(12, element.frame.width + CGFloat(side)*delta)
-        let shift = SceneTransformController.rotate(CGPoint(x: CGFloat(side)*(width-element.frame.width)/2, y: 0), element.rotation * .pi/180)
+        let shift = element.localVector(CGPoint(x: CGFloat(side)*(width-element.frame.width)/2, y: 0))
         var next = start
         next.scene.elements[index].frame.size.width = width
         next.scene.elements[index].frame.origin.x += shift.x - (width-element.frame.width)/2
@@ -337,21 +371,21 @@ final class SceneCanvasController {
         finishText()
         beginNewText(at: images.insertionPoint, width: nil)
     }
-    func createCenteredNote() {
+    func createCenteredNote(at location: CGPoint? = nil) {
         finishText()
         let initial = state.value
         let size = CGSize(width: min(320, state.scene.canvasSize.width), height: min(200, state.scene.canvasSize.height))
-        let point = images.insertionPoint
+        let point = location ?? images.insertionPoint
         let frame = CGRect(x: max(0, min(point.x - size.width/2, state.scene.canvasSize.width-size.width)),
                            y: max(0, min(point.y - size.height/2, state.scene.canvasSize.height-size.height)), width: size.width, height: size.height)
         let e = SceneElementModel(kind: .note, frame: frame, text: "")
         var next = initial; next.scene.elements.append(e); next.selection = [e.id]
         state.preview(next); beginEditing(e, initial: initial, isNew: true)
     }
-    func createCenteredCountdown() {
+    func createCenteredCountdown(at location: CGPoint? = nil) {
         finishText()
         let size = CGSize(width: min(320, state.scene.canvasSize.width), height: min(80, state.scene.canvasSize.height))
-        let point = images.insertionPoint
+        let point = location ?? images.insertionPoint
         let frame = CGRect(x: max(0, min(point.x-size.width/2, state.scene.canvasSize.width-size.width)),
                            y: max(0, min(point.y-size.height/2, state.scene.canvasSize.height-size.height)), width: size.width, height: size.height)
         var e = SceneElementModel(kind: .countdown, frame: frame)
@@ -361,10 +395,10 @@ final class SceneCanvasController {
         state.preview(next); state.finish(from: initial)
         onEditCountdown?()
     }
-    func createCenteredClock() {
+    func createCenteredClock(at location: CGPoint? = nil) {
         finishText()
         let size = CGSize(width: min(600, state.scene.canvasSize.width), height: min(120, state.scene.canvasSize.height))
-        let point = images.insertionPoint
+        let point = location ?? images.insertionPoint
         var element = SceneElementModel(kind: .clock, frame: CGRect(
             x: max(0, min(point.x-size.width/2, state.scene.canvasSize.width-size.width)),
             y: max(0, min(point.y-size.height/2, state.scene.canvasSize.height-size.height)), width: size.width, height: size.height))
@@ -401,27 +435,28 @@ final class SceneCanvasController {
             widthStart = nil; state.preview(start); initialText = start; view.cancelTextWidthGesture(); refresh()
         } else if let snapshot = original {
             clearGesture()
-            textTool = false
+            placementTool = nil
             state.preview(snapshot)
         } else if editingID != nil {
             finishText(); view.focus()
-        } else if textTool {
-            textTool = false
+        } else if placementTool != nil {
+            placementTool = nil
         } else {
             state.select([])
         }
     }
     private func writeSelection() -> Bool {
-        do { return try SceneTransfer.write(state.selected, to: .general) }
+        do { return try SceneTransfer.write(state.selected, to: contextPasteboard) }
         catch { onError?("Не удалось скопировать выделение."); return false }
     }
     private func handle(_ action: SceneCanvasAction) {
         switch action {
-        case .armText:
-            finishText()
-            textTool = true
-            view.focus()
+        case .armText: arm(.text)
         case .createText: createCenteredText()
+        case .place(let tool, let point): create(tool, at: point)
+        case .pasteHere(let point): _ = onPasteHere?(contextPasteboard, point)
+        case .pasteReplacing(let id): _ = onPaste?(contextPasteboard, .replace(id))
+        case .toggleLock: finishText(); state.toggleLocked(state.selection)
         case .editSelection: editSelection()
         case .finishText: finishText()
         case .cancel: cancel()

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_DIR="$PROJECT_DIR/build/TEotW.app"
+APP_DIR="$PROJECT_DIR/build/Mice.app"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources/Fonts" "$PROJECT_DIR/build/ModuleCache"
 test -f "$PROJECT_DIR/Resources/Fonts/Manrope.ttf"
 ARCHITECTURES=(arm64)
@@ -13,7 +13,7 @@ elif [[ -n "${1:-}" ]]; then
 fi
 BINARIES=()
 for architecture in "${ARCHITECTURES[@]}"; do
-  binary="$PROJECT_DIR/build/TEotW-$architecture"
+  binary="$PROJECT_DIR/build/Mice-$architecture"
   /usr/bin/swiftc -swift-version 5 -O -module-cache-path "$PROJECT_DIR/build/ModuleCache" \
     -target "$architecture-apple-macosx15.0" -framework AppKit -framework CoreText -framework CoreGraphics \
     "$PROJECT_DIR"/Sources/Features/*/Models/*.swift \
@@ -29,10 +29,10 @@ for architecture in "${ARCHITECTURES[@]}"; do
     -o "$binary"
   BINARIES+=("$binary")
 done
-/usr/bin/lipo -create "${BINARIES[@]}" -output "$APP_DIR/Contents/MacOS/TEotW"
-/usr/bin/swiftc -swift-version 5 -module-cache-path "$PROJECT_DIR/build/ModuleCache" -framework AppKit \
-  "$PROJECT_DIR/Sources/Shared/Views/StatusIcon.swift" "$PROJECT_DIR/scripts/GenerateIcon.swift" -o "$PROJECT_DIR/build/GenerateIcon"
-"$PROJECT_DIR/build/GenerateIcon" "$PROJECT_DIR/build/AppIcon.iconset"
+/usr/bin/lipo -create "${BINARIES[@]}" -output "$APP_DIR/Contents/MacOS/Mice"
+/usr/bin/swiftc -parse-as-library -swift-version 5 -module-cache-path "$PROJECT_DIR/build/ModuleCache" -framework AppKit \
+  "$PROJECT_DIR/scripts/GenerateIcon.swift" -o "$PROJECT_DIR/build/GenerateIcon"
+"$PROJECT_DIR/build/GenerateIcon" "$PROJECT_DIR/build/AppIcon.iconset" "$PROJECT_DIR/Resources/Branding/AppIcon.png"
 cp "$PROJECT_DIR/build/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 cp "$PROJECT_DIR/Resources/events.json" "$APP_DIR/Contents/Resources/"
 cp "$PROJECT_DIR/Resources/Fonts/Manrope.ttf" "$PROJECT_DIR/Resources/Fonts/OFL.txt" "$APP_DIR/Contents/Resources/Fonts/"
@@ -44,10 +44,10 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>TEotW</string>
+<key>CFBundleExecutable</key><string>Mice</string>
 <key>CFBundleIdentifier</key><string>local.teotw.countdown</string>
-<key>CFBundleName</key><string>Следующий конец света</string>
-<key>CFBundleDisplayName</key><string>Следующий конец света</string>
+<key>CFBundleName</key><string>Mice</string>
+<key>CFBundleDisplayName</key><string>Mice</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.4.0</string>

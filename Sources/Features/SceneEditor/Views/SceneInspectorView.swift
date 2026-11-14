@@ -22,6 +22,8 @@ struct SceneInspectorPresentation {
     var showsNoteControls: Bool = false
     var overflowMessage: String? = nil
     var canAlign: Bool = false
+    /// 0 unlocked, 1 locked, 2 mixed group.
+    var layerLocks: [Int] = []
 }
 
 private final class SceneStackView: NSView { override var isFlipped: Bool { true } }
@@ -37,6 +39,7 @@ private final class SceneLayerTable: NSTableView {
 final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     var onFocus: (() -> Void)?
     var onSelectionChange: ((IndexSet) -> Void)?
+    var onLockToggle: ((Int) -> Void)?
     var onFieldChange: ((String, String, String) -> SceneInspectorFieldPresentation?)?
     var onMenuChange: ((String, Int) -> Void)?
     var onCenter: ((Bool) -> Void)?
@@ -44,11 +47,15 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
     let countdown = SceneCountdownInspectorView()
     let clock = SceneClockInspectorView()
     private let table = SceneLayerTable(), properties = NSStackView()
+    private let layerScroll = NSScrollView()
+    private let layersDisclosure = NSButton()
+    private(set) var layersExpanded = true
     private let empty = NSTextField(wrappingLabelWithString: "")
     private let selectionLabel = NSTextField(labelWithString: "Свойства")
     private var fields = [String: NSTextField](), menus = [String: NSPopUpButton]()
     private var changedField: NSTextField?
     private var rows: [String] = [], syncing = false
+    private var layerLocks: [Int] = []
     private var textRows = [NSView](), noteRows = [NSView]()
     private var alignmentButtons: [NSButton] = []
     private let overflow = NSTextField(wrappingLabelWithString: "")
@@ -61,9 +68,16 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         let document = SceneStackView(); scroll.documentView = document; document.translatesAutoresizingMaskIntoConstraints = false
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false; document.addSubview(stack)
+        layersDisclosure.setButtonType(.onOff)
+        layersDisclosure.bezelStyle = .disclosure
+        layersDisclosure.title = ""; layersDisclosure.state = .on
+        layersDisclosure.target = self; layersDisclosure.action = #selector(toggleLayers)
+        layersDisclosure.setAccessibilityLabel("Скрыть слои")
+        layersDisclosure.identifier = .init("layers-disclosure")
         let layers = NSTextField(labelWithString: "Слои"); layers.font = .boldSystemFont(ofSize: 14)
-        stack.addArrangedSubview(layers)
-        let layerScroll = NSScrollView(); layerScroll.hasVerticalScroller = true
+        let layerHeader = NSStackView(views: [layersDisclosure, layers]); layerHeader.spacing = 4
+        stack.addArrangedSubview(layerHeader)
+        layerScroll.hasVerticalScroller = true
         layerScroll.borderType = .bezelBorder; layerScroll.documentView = table
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("layer")); col.resizingMask = .autoresizingMask
         table.addTableColumn(col); table.headerView = nil; table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
@@ -125,13 +139,30 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    @objc private func toggleLayers() {
+        layersExpanded = layersDisclosure.state == .on
+        layerScroll.isHidden = !layersExpanded
+        layersDisclosure.setAccessibilityLabel(layersExpanded ? "Скрыть слои" : "Показать слои")
+    }
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let id = NSUserInterfaceItemIdentifier("layer-name")
-        let label = tableView.makeView(withIdentifier: id, owner: self) as? NSTextField ?? NSTextField(labelWithString: "")
-        label.identifier = id; label.stringValue = rows[row]; label.lineBreakMode = .byTruncatingTail
-        return label
+        let label = NSTextField(labelWithString: rows[row])
+        label.identifier = .init("layer-name"); label.lineBreakMode = .byTruncatingTail
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let lock = layerLocks.indices.contains(row) ? layerLocks[row] : 0
+        let button = NSButton(image: NSImage(systemSymbolName: lock == 0 ? "lock.open" : "lock.fill", accessibilityDescription: nil)!, target: self, action: #selector(toggleLayerLock(_:)))
+        button.bezelStyle = .inline; button.tag = row
+        button.identifier = .init("layer-lock-\(row)")
+        let action = lock == 1 ? "Разблокировать" : lock == 2 ? "Заблокировать всю группу" : "Заблокировать"
+        button.toolTip = lock == 2 ? "Частично заблокировано. Заблокировать всю группу" : action
+        button.setAccessibilityLabel("\(action): \(rows[row].trimmingCharacters(in: .whitespaces))")
+        button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        if lock == 2 { button.alphaValue = 0.5 }
+        let rowView = NSStackView(views: [label, button]); rowView.spacing = 4; rowView.alignment = .centerY
+        return rowView
     }
+    @objc private func toggleLayerLock(_ sender: NSButton) { onLockToggle?(sender.tag) }
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !syncing else { return }
         onSelectionChange?(table.selectedRowIndexes)
@@ -160,7 +191,9 @@ final class SceneInspectorView: NSView, NSTableViewDataSource, NSTableViewDelega
     }
     func render(_ presentation: SceneInspectorPresentation) {
         syncing = true; defer { syncing = false }
-        if rows != presentation.layers { rows = presentation.layers; table.reloadData() }
+        if rows != presentation.layers || layerLocks != presentation.layerLocks {
+            rows = presentation.layers; layerLocks = presentation.layerLocks; table.reloadData()
+        }
         if table.selectedRowIndexes != presentation.selectedRows {
             table.selectRowIndexes(presentation.selectedRows, byExtendingSelection: false)
         }

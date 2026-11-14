@@ -9,9 +9,10 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     private let canvas: SceneCanvasView
     private let inspector: SceneInspectorView
     private let status = NSTextField(labelWithString: "Локальная композиция")
-    private let undoButton = NSButton(), redoButton = NSButton()
-    private let guides = NSButton(checkboxWithTitle: "Ориентиры", target: nil, action: nil)
-    private let clock = NSButton(checkboxWithTitle: "Часы", target: nil, action: nil)
+    private let guides = NSButton(checkboxWithTitle: "Ориентир входа", target: nil, action: nil)
+    private let clock = NSButton(checkboxWithTitle: "Ориентир часов", target: nil, action: nil)
+    private let clockHelp = NSButton()
+    private(set) var clockPopover = NSPopover()
     private var blocked: String?
     private var pendingSave: DispatchWorkItem?
     // Typing can save a provisional scene before the editing session commits.
@@ -21,35 +22,42 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     var scene: EditorSceneModel { state.scene }
     var canUndo: Bool { state.canUndo }
     var onSceneChange: ((EditorSceneModel?) -> Void)?
-    var onRevealLegacy: (() -> Void)?
+    var onOpenSystemSettings: () -> Bool = {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Lock-Screen-Settings.extension") else { return false }
+        return NSWorkspace.shared.open(url)
+    }
     var onVisibilityChange: ((Bool) -> Void)?
 
-    init(scene: EditorSceneModel, hasSavedScene: Bool, store: SceneStore, catalog: EventCatalogModel = .init(), now: Date = Date()) {
+    init(scene: EditorSceneModel, hasSavedScene: Bool, store: SceneStore, catalog: EventCatalogModel = .init(), now: Date = Date(), pasteboard: NSPasteboard = .general) {
         hasCommittedDocument = hasSavedScene
         savedDocument = hasSavedScene ? scene : nil
         desiredDocument = savedDocument
         self.store = store; state = SceneEditingStateModel(scene)
         canvasController = SceneCanvasController(state: state, store: store, catalog: catalog, now: now)
+        canvasController.contextPasteboard = pasteboard
         canvas = canvasController.view
         inspector = SceneInspectorView(frame: .zero)
         inspectorController = SceneInspectorController(state: state, view: inspector, catalog: catalog, now: now)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 710),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
-        window.title = "Редактор экрана блокировки"; window.minSize = CGSize(width: 760, height: 480)
+        window.title = "Mice — редактор экрана блокировки"; window.minSize = CGSize(width: 760, height: 480)
         window.isReleasedWhenClosed = false; window.delegate = self; window.center()
         buildWindow(window)
         state.onUpdate = { [weak self] in self?.update($0) }
         canvasController.onEditClock = { [weak self] in self?.inspectorController.clock.focus() }
         canvasController.onEditCountdown = { [weak self] in self?.inspectorController.countdown.focus() }
         canvasController.onPickReplacement = { [weak self] id in self?.pick(.replace(id)) }
+        canvasController.onPickImage = { [weak self] point in self?.pick(.add(point)) }
         canvasController.onPaste = { [weak self] board, target in self?.paste(board, drop: target) ?? false }
+        canvasController.onPasteHere = { [weak self] board, point in self?.paste(board, drop: nil, insertionPoint: point) ?? false }
         canvasController.onRestoreTypedScene = { [weak self] in
             guard let self else { return }
             self.desiredDocument = self.hasCommittedDocument ? self.scene : nil
             self.saveIfNeeded()
         }
         inspectorController.onFocus = { [weak self] in self?.canvas.focus() }
+        inspectorController.onBeforeLock = { [weak self] in self?.finishFields() }
         inspectorController.onError = { [weak self] in self?.showError($0) }
         canvasController.onError = inspectorController.onError
         update(.selection)
@@ -63,7 +71,7 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     func flush() { // Also useful from applicationWillTerminate, when there is no windowWillClose.
         window?.makeFirstResponder(nil); canvasController.finishText(); saveIfNeeded()
     }
-    func windowWillClose(_ notification: Notification) { flush(); onVisibilityChange?(false) }
+    func windowWillClose(_ notification: Notification) { clockPopover.performClose(nil); flush(); onVisibilityChange?(false) }
 
     private func buildWindow(_ window: NSWindow) {
         let root = NSView(); window.contentView = root
@@ -71,24 +79,52 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         let add = NSPopUpButton(frame: .zero, pullsDown: true)
         add.addItem(withTitle: "Добавить"); add.addItem(withTitle: "Текст"); add.addItem(withTitle: "Заметка"); add.addItem(withTitle: "Фото с устройства…"); add.addItem(withTitle: "Таймер"); add.addItem(withTitle: "Часы")
         add.target = self; add.action = #selector(addSelected(_:)); add.setAccessibilityLabel("Добавить")
-        func button(_ b: NSButton, _ symbol: String, _ label: String, _ selector: Selector) {
-            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label); b.bezelStyle = .rounded
-            b.toolTip = label; b.setAccessibilityLabel(label); b.target = self; b.action = selector
-        }
-        button(undoButton,"arrow.uturn.backward","Отменить",#selector(undoClicked))
-        button(redoButton,"arrow.uturn.forward","Повторить",#selector(redoClicked))
-        guides.toolTip = "Приблизительные области системных часов и входа macOS"
+        guides.toolTip = "Приблизительная область имени пользователя и пароля macOS"
         guides.target = self; guides.action = #selector(toggleGuides); guides.state = .on
-        clock.target = self; clock.action = #selector(toggleGuides); clock.state = .on
-        [add,undoButton,redoButton,guides,clock].forEach { bar.addArrangedSubview($0) }
-        let legacy = NSButton(title: "Редактор отсчёта…", target: self, action: #selector(revealLegacy)); legacy.bezelStyle = .rounded
+        guides.identifier = .init("login-guide")
+        clock.toolTip = "Приблизительная область системных часов macOS"
+        clock.target = self; clock.action = #selector(toggleClock); clock.state = .on
+        clock.identifier = .init("clock-guide")
+        clockHelp.bezelStyle = .helpButton; clockHelp.title = ""
+        clockHelp.target = self; clockHelp.action = #selector(toggleClockHelp)
+        clockHelp.identifier = .init("clock-guide-help")
+        clockHelp.setAccessibilityLabel("О системных часах")
+        clockHelp.toolTip = "Как скрыть системные часы macOS"
+        [add,guides,clock,clockHelp].forEach { bar.addArrangedSubview($0) }
+        let noticeText = NSTextField(wrappingLabelWithString: "Переключатель скрывает только ориентир в редакторе. Системные часы отключаются в настройках macOS: «Показывать большие часы» → «Никогда».")
+        noticeText.font = .systemFont(ofSize: 12); noticeText.textColor = .secondaryLabelColor
+        noticeText.preferredMaxLayoutWidth = 328
+        let settings = NSButton(title: "Настройки экрана блокировки…", target: self, action: #selector(openSystemSettings))
+        settings.identifier = .init("clock-guide-settings"); settings.controlSize = .small
+        let dismiss = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Закрыть уведомление")!, target: self, action: #selector(dismissClockNotice))
+        dismiss.identifier = .init("clock-guide-dismiss"); dismiss.bezelStyle = .inline
+        let title = NSTextField(labelWithString: "Системные часы macOS"); title.font = .boldSystemFont(ofSize: 13)
+        let heading = NSStackView(views: [title, dismiss]); heading.distribution = .fill; heading.spacing = 8
+        title.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let content = NSView()
+        let stack = NSStackView(views: [heading, noticeText, settings])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+            stack.widthAnchor.constraint(equalToConstant: 328),
+            heading.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            noticeText.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        ])
+        let helpController = NSViewController(); helpController.view = content
+        clockPopover.contentViewController = helpController
+        clockPopover.contentSize = content.fittingSize
+        clockPopover.behavior = .transient; clockPopover.animates = false
         let line = NSBox(); line.boxType = .separator
         let sidebarLine = NSBox(); sidebarLine.boxType = .separator
         status.font = .systemFont(ofSize: 12); status.textColor = .secondaryLabelColor; status.lineBreakMode = .byTruncatingTail
-        [bar,legacy,line,canvas,sidebarLine,inspector,status].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; root.addSubview($0) }
+        [bar,line,canvas,sidebarLine,inspector,status].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; root.addSubview($0) }
         NSLayoutConstraint.activate([
             bar.topAnchor.constraint(equalTo: root.topAnchor, constant: 10), bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            legacy.centerYAnchor.constraint(equalTo: bar.centerYAnchor),legacy.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            bar.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -12),
             line.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: 10),line.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             line.trailingAnchor.constraint(equalTo: root.trailingAnchor),line.heightAnchor.constraint(equalToConstant: 1),
             canvas.topAnchor.constraint(equalTo: line.bottomAnchor),canvas.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -104,22 +140,30 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
     private func finishFields() { window?.makeFirstResponder(canvas); canvasController.finishText() }
     @objc private func addSelected(_ sender: NSPopUpButton) {
         finishFields()
-        if sender.indexOfSelectedItem == 1 { canvasController.createCenteredText() }
-        if sender.indexOfSelectedItem == 2 { canvasController.createCenteredNote() }
-        if sender.indexOfSelectedItem == 3 { pick(.add(canvasController.images.insertionPoint)) }
-        if sender.indexOfSelectedItem == 4 { canvasController.createCenteredCountdown() }
-        if sender.indexOfSelectedItem == 5 { canvasController.createCenteredClock() }
+        guard let tool = SceneCanvasTool(rawValue: sender.indexOfSelectedItem - 1) else { return }
+        canvasController.arm(tool)
     }
-    @objc private func undoClicked() { finishFields(); state.undo() }
-    @objc private func redoClicked() { finishFields(); state.redo() }
-    @objc private func revealLegacy() { finishFields(); onRevealLegacy?() }
     @objc private func toggleGuides() {
-        canvas.guides = guides.state == .on; canvas.clock = clock.state == .on
-        clock.isEnabled = canvas.guides; canvas.focus()
+        canvas.guides = guides.state == .on; canvas.focus()
+    }
+    @objc private func toggleClock() {
+        canvas.clock = clock.state == .on
+        canvas.focus()
+        if canvas.clock { clockPopover.performClose(nil) }
+    }
+    private func showClockHelp() {
+        guard clockHelp.window?.isVisible == true else { return }
+        clockPopover.show(relativeTo: clockHelp.bounds, of: clockHelp, preferredEdge: .maxY)
+    }
+    @objc private func toggleClockHelp() {
+        if clockPopover.isShown { clockPopover.performClose(nil) } else { showClockHelp() }
+    }
+    @objc private func dismissClockNotice() { clockPopover.performClose(nil) }
+    @objc private func openSystemSettings() {
+        if !onOpenSystemSettings() { showError("Не удалось открыть настройки экрана блокировки macOS.") }
     }
     private func update(_ kind: SceneUpdate) {
         canvasController.refresh(); inspectorController.refresh()
-        undoButton.isEnabled = canUndo; redoButton.isEnabled = state.canRedo
         switch kind {
         case .selection, .preview: break
         case .typing:
@@ -170,14 +214,14 @@ final class SceneEditorWindowController: NSWindowController, NSWindowDelegate {
         if let blocked = blocked { throw SceneError.invalid(blocked) }
         try canvasController.images.importImages(inputs, at: target)
     }
-    private func paste(_ board: NSPasteboard, drop: SceneImageDestination?) -> Bool {
-        let target = drop ?? canvasController.images.pasteImageDestination
+    private func paste(_ board: NSPasteboard, drop: SceneImageDestination?, insertionPoint: CGPoint? = nil) -> Bool {
+        let target = drop ?? insertionPoint.map { .add($0) } ?? canvasController.images.pasteImageDestination
         do {
             switch try SceneTransfer.read(board, allowLayers: drop == nil) {
-            case .layers(let copied): state.insertCopies(copied)
+            case .layers(let copied): state.insertCopies(copied, at: insertionPoint)
             case .images(let images): try importImages(images, into: target)
             case .text(let string) where drop == nil:
-                var e = SceneElementModel(kind: .text, frame: CGRect(origin: canvasController.images.insertionPoint,
+                var e = SceneElementModel(kind: .text, frame: CGRect(origin: insertionPoint ?? canvasController.images.insertionPoint,
                                      size: CGSize(width: max(60,scene.canvasSize.width*0.45),height: 1)), text: string)
                 SceneTextLayout.fit(&e)
                 state.change { $0.scene.elements.append(e); $0.selection = [e.id] }

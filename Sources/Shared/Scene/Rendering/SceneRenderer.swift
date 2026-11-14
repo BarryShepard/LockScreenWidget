@@ -27,6 +27,7 @@ struct SceneRenderElement: Equatable {
     let cornerRadius: Double
     let opacity: Double
     let drawing: SceneRenderDrawing
+    var linearTransform: CGAffineTransform = .identity
 }
 
 enum SceneRenderDrawing: Equatable {
@@ -63,6 +64,7 @@ final class SceneRenderer {
             ctx.saveGState()
             ctx.translateBy(x: e.frame.midX, y: e.frame.midY)
             ctx.rotate(by: e.rotation * .pi / 180)
+            ctx.concatenate(e.linearTransform)
             ctx.translateBy(x: -e.frame.width/2, y: -e.frame.height/2)
             let box = CGRect(origin: .zero, size: e.frame.size)
             ctx.addPath(SceneCornerPath.path(in: box, radius: e.cornerRadius)); ctx.clip()
